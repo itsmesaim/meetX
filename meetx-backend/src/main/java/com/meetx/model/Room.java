@@ -21,11 +21,21 @@ public class Room {
     private String id;
 
     @Indexed(unique = true)
-    private String roomCode;   // e.g. "A3F9-BC12"
+    private String roomCode;
 
-    private String createdBy;  // User.id of the creator
+    private String createdBy;        // User.id of creator
 
     private LocalDateTime createdAt;
 
     private boolean active;
+
+    // ── Session tracking ──────────────────────────────────────
+    // How many participants are currently in the room.
+    // Incremented on join, decremented on leave.
+    @Builder.Default
+    private int participantCount = 0;
+
+    // Set when participantCount drops to 0.
+    // Scheduler closes the room 30 mins after this timestamp.
+    private LocalDateTime lastEmptyAt;
 }

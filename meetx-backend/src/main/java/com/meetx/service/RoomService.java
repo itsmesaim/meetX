@@ -7,9 +7,11 @@ import com.meetx.repository.RoomRepository;
 import com.meetx.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 
 @Slf4j
@@ -20,13 +22,11 @@ public class RoomService {
     private final RoomRepository roomRepository;
     private final UserRepository userRepository;
 
-    /**
-     * Creates a new room, generating a random, unique, collision-safe room code.
-     * Room code format: "XXXX-XXXX" (4 hex chars, dash, 4 hex chars) — e.g. "A3F9-BC12".
-     *
-     * @param email the authenticated user's email (from JWT subject)
-     * @return CreateRoomResponse with the persisted room id and code
-     */
+    // How long an empty room stays active before being auto-closed
+    private static final int EMPTY_ROOM_TTL_MINUTES = 30;
+
+    // ── Create ────────────────────────────────────────────────
+
     public CreateRoomResponse createRoom(String email) {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("User not found: " + email));
@@ -38,22 +38,18 @@ public class RoomService {
                 .createdBy(user.getId())
                 .createdAt(LocalDateTime.now())
                 .active(true)
+                .participantCount(0)
+                .lastEmptyAt(LocalDateTime.now())   // starts "empty" from creation
                 .build();
 
         room = roomRepository.save(room);
-        log.debug("Room created: {} by user: {}", roomCode, email);
+        log.debug("Room created: {} by {}", roomCode, email);
 
         return new CreateRoomResponse(room.getId(), room.getRoomCode());
     }
 
-    /**
-     * Validates that a room exists and is still active.
-     * Used both by the join endpoint and by the token endpoint to gate access.
-     *
-     * @param roomCode the code to look up
-     * @return the Room document
-     * @throws RuntimeException if the room doesn't exist or is no longer active
-     */
+    // ── Join / Leave ──────────────────────────────────────────
+
     public Room joinRoom(String roomCode) {
         return roomRepository.findByRoomCode(roomCode.toUpperCase().trim())
                 .filter(Room::isActive)
@@ -62,12 +58,38 @@ public class RoomService {
     }
 
     /**
-     * Marks a room as inactive (soft-close).
-     * Extend with a DELETE endpoint or a scheduled cleanup job as needed.
-     *
-     * @param roomCode the code of the room to close
-     * @param requestingEmail the authenticated user's email — only the creator may close
+     * Called when a participant joins the LiveKit room.
+     * Increments participantCount and clears the lastEmptyAt timer.
      */
+    public void onParticipantJoin(String roomCode) {
+        roomRepository.findByRoomCode(roomCode.toUpperCase().trim()).ifPresent(room -> {
+            room.setParticipantCount(room.getParticipantCount() + 1);
+            room.setLastEmptyAt(null);   // room is no longer empty
+            roomRepository.save(room);
+            log.debug("Participant joined room={} count={}", roomCode, room.getParticipantCount());
+        });
+    }
+
+    /**
+     * Called when a participant leaves the LiveKit room.
+     * Decrements participantCount. If it hits 0, starts the 30-min countdown.
+     */
+    public void onParticipantLeave(String roomCode) {
+        roomRepository.findByRoomCode(roomCode.toUpperCase().trim()).ifPresent(room -> {
+            int count = Math.max(0, room.getParticipantCount() - 1);
+            room.setParticipantCount(count);
+
+            if (count == 0) {
+                room.setLastEmptyAt(LocalDateTime.now());
+                log.debug("Room {} is now empty — 30min countdown started", roomCode);
+            }
+
+            roomRepository.save(room);
+        });
+    }
+
+    // ── Soft-close (manual by creator) ───────────────────────
+
     public void closeRoom(String roomCode, String requestingEmail) {
         User user = userRepository.findByEmail(requestingEmail)
                 .orElseThrow(() -> new RuntimeException("User not found: " + requestingEmail));
@@ -81,15 +103,32 @@ public class RoomService {
 
         room.setActive(false);
         roomRepository.save(room);
-        log.debug("Room closed: {} by user: {}", roomCode, requestingEmail);
+        log.debug("Room {} manually closed by {}", roomCode, requestingEmail);
     }
 
-    // ── private helpers ──────────────────────────────────────────────────────
+    // ── Scheduler: auto-close empty rooms after 30 mins ──────
 
     /**
-     * Loops until it finds a code not already present in MongoDB.
-     * In practice this virtually always terminates on the first iteration.
+     * Runs every 5 minutes.
+     * Finds all active rooms that have been empty for 30+ minutes and closes them.
      */
+    @Scheduled(fixedDelay = 5 * 60 * 1000)   // every 5 minutes
+    public void closeAbandonedRooms() {
+        LocalDateTime threshold = LocalDateTime.now().minusMinutes(EMPTY_ROOM_TTL_MINUTES);
+        List<Room> abandoned = roomRepository.findAbandonedRooms(threshold);
+
+        if (!abandoned.isEmpty()) {
+            log.info("Auto-closing {} abandoned room(s)", abandoned.size());
+            abandoned.forEach(room -> {
+                room.setActive(false);
+                roomRepository.save(room);
+                log.debug("Auto-closed room: {}", room.getRoomCode());
+            });
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────
+
     private String generateUniqueRoomCode() {
         String code;
         do {

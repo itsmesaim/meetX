@@ -23,82 +23,34 @@ public class RoomController {
     private final RoomService roomService;
     private final LiveKitService liveKitService;
 
-    /**
-     * POST /api/rooms/create   [Authorization: Bearer <JWT> required]
-     *
-     * Creates a new room. The authenticated user becomes the room owner.
-     *
-     * Response (201 Created):
-     * {
-     *   "success": true,
-     *   "message": "Room created successfully",
-     *   "data": {
-     *     "roomId":   "64abc...",
-     *     "roomCode": "A3F9-BC12"
-     *   }
-     * }
-     */
+    /** POST /api/rooms/create — create a new room */
     @PostMapping("/create")
     public ResponseEntity<ApiResponse<CreateRoomResponse>> createRoom(
             @AuthenticationPrincipal UserDetails userDetails) {
 
         CreateRoomResponse response = roomService.createRoom(userDetails.getUsername());
-        return ResponseEntity
-                .status(HttpStatus.CREATED)
+        return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.success("Room created successfully", response));
     }
 
-    /**
-     * POST /api/rooms/join   [No auth required — shareable link entry point]
-     *
-     * Validates the room code and returns the Room document.
-     * Intended as a lightweight "does this room exist?" check before connecting to LiveKit.
-     *
-     * Request body:
-     * { "roomCode": "A3F9-BC12" }
-     *
-     * Response (200 OK):
-     * {
-     *   "success": true,
-     *   "message": "Joined room successfully",
-     *   "data": { ...Room fields... }
-     * }
-     */
+    /** POST /api/rooms/join — validate a room code */
     @PostMapping("/join")
     public ResponseEntity<ApiResponse<Room>> joinRoom(
             @RequestBody JoinRoomRequest request) {
 
         Room room = roomService.joinRoom(request.getRoomCode());
-        return ResponseEntity.ok(ApiResponse.success("Joined room successfully", room));
+        return ResponseEntity.ok(ApiResponse.success("Room is active", room));
     }
 
-    /**
-     * GET /api/rooms/{code}/token?participantName=Alice   [Authorization: Bearer <JWT> required]
-     *
-     * Verifies the room is active, then mints a signed LiveKit access token.
-     * The participantName param is optional; defaults to the authenticated user's email.
-     *
-     * Response (200 OK):
-     * {
-     *   "success": true,
-     *   "message": "Token generated",
-     *   "data": {
-     *     "token":           "<LiveKit JWT>",
-     *     "roomCode":        "A3F9-BC12",
-     *     "participantName": "Alice"
-     *   }
-     * }
-     */
+    /** GET /api/rooms/{code}/token — get LiveKit token */
     @GetMapping("/{code}/token")
     public ResponseEntity<ApiResponse<LiveKitTokenResponse>> getLiveKitToken(
             @PathVariable String code,
             @RequestParam(required = false) String participantName,
             @AuthenticationPrincipal UserDetails userDetails) {
 
-        // Validate the room before issuing any token
         roomService.joinRoom(code);
 
-        // Fall back to email if caller didn't supply a display name
         String identity = (participantName != null && !participantName.isBlank())
                 ? participantName
                 : userDetails.getUsername();
@@ -108,13 +60,28 @@ public class RoomController {
     }
 
     /**
-     * DELETE /api/rooms/{code}   [Authorization: Bearer <JWT> required]
-     *
-     * Soft-closes a room (sets active=false). Only the room creator may do this.
-     *
-     * Response (200 OK):
-     * { "success": true, "message": "Room closed", "data": null }
+     * POST /api/rooms/{code}/session/join
+     * Called by the frontend when a participant successfully connects to LiveKit.
+     * Increments the participant counter and clears the empty-room timer.
      */
+    @PostMapping("/{code}/session/join")
+    public ResponseEntity<ApiResponse<Void>> participantJoined(@PathVariable String code) {
+        roomService.onParticipantJoin(code);
+        return ResponseEntity.ok(ApiResponse.success("Session updated", null));
+    }
+
+    /**
+     * POST /api/rooms/{code}/session/leave
+     * Called by the frontend when a participant disconnects from LiveKit.
+     * Decrements the counter. If it hits 0, starts the 30-min auto-close countdown.
+     */
+    @PostMapping("/{code}/session/leave")
+    public ResponseEntity<ApiResponse<Void>> participantLeft(@PathVariable String code) {
+        roomService.onParticipantLeave(code);
+        return ResponseEntity.ok(ApiResponse.success("Session updated", null));
+    }
+
+    /** DELETE /api/rooms/{code} — creator manually closes the room */
     @DeleteMapping("/{code}")
     public ResponseEntity<ApiResponse<Void>> closeRoom(
             @PathVariable String code,

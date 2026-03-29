@@ -14,6 +14,22 @@ spring:
     serialization:
       write-dates-as-timestamps: false
 
+  # ── Gmail SMTP ──────────────────────────────────────────────
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+        debug: false
+    default-encoding: UTF-8
+
 app:
   jwt:
     secret: ${JWT_SECRET}
@@ -28,3 +44,4 @@ logging:
   level:
     com.meetx: DEBUG
     org.springframework.security: INFO
+    org.springframework.mail: INFO

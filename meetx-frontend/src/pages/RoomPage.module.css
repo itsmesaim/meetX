@@ -14,7 +14,7 @@
   padding: 0 20px;
   height: 58px;
   border-bottom: 1px solid var(--border);
-  background: rgba(6,7,13,0.85);
+  background: rgba(6, 7, 13, 0.85);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   flex-shrink: 0;
@@ -54,10 +54,15 @@
   color: var(--text-3);
   padding: 2px;
   border-radius: 4px;
-  transition: color 0.15s, background 0.15s;
+  transition:
+    color 0.15s,
+    background 0.15s;
   line-height: 0;
 }
-.copyBtn:hover { color: var(--text); background: var(--surface-2); }
+.copyBtn:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
 
 .headerRight {
   display: flex;
@@ -76,7 +81,9 @@
   display: none;
 }
 @media (min-width: 500px) {
-  .headerBtnLabel { display: inline; }
+  .headerBtnLabel {
+    display: inline;
+  }
 }
 
 /* ── Room body ── */
@@ -101,7 +108,9 @@
   padding: 12px;
   transition: flex 0.3s var(--ease-out);
 }
-.videoNarrow { flex: 1; }
+.videoNarrow {
+  flex: 1;
+}
 
 .grid {
   width: 100% !important;
@@ -139,7 +148,10 @@
   color: var(--text-2);
   font-size: 0.95rem;
 }
-.loadingText strong { color: var(--text); font-family: var(--font-mono); }
+.loadingText strong {
+  color: var(--text);
+  font-family: var(--font-mono);
+}
 
 .errorCard {
   display: flex;
@@ -149,7 +161,7 @@
   padding: 40px;
   max-width: 420px;
   background: var(--surface);
-  border: 1px solid rgba(255,77,106,0.2);
+  border: 1px solid rgba(255, 77, 106, 0.2);
   border-radius: var(--r-xl);
 }
 .errorMsg {
@@ -159,7 +171,16 @@
 }
 
 @media (max-width: 720px) {
-  .chatAside { width: 100%; border-left: none; border-top: 1px solid var(--border); }
-  .body { flex-direction: column; }
-  .videoSection { flex: none; height: 50%; }
+  .chatAside {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+  .body {
+    flex-direction: column;
+  }
+  .videoSection {
+    flex: none;
+    height: 50%;
+  }
 }

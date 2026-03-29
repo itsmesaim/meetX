@@ -5,7 +5,7 @@
   padding: 0 28px;
   height: 60px;
   border-bottom: 1px solid var(--border);
-  background: rgba(6,7,13,0.7);
+  background: rgba(6, 7, 13, 0.7);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   position: sticky;
@@ -39,7 +39,8 @@
 }
 
 .avatar {
-  width: 32px; height: 32px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--teal) 0%, var(--violet) 100%);
   display: flex;
@@ -69,6 +70,10 @@
 }
 
 @media (max-width: 480px) {
-  .userName { display: none; }
-  .nav { padding: 0 16px; }
+  .userName {
+    display: none;
+  }
+  .nav {
+    padding: 0 16px;
+  }
 }

@@ -70,8 +70,13 @@
 }
 
 @keyframes dotPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 
 .statusLabel {
@@ -219,8 +224,13 @@
   font-family: var(--font-mono);
 }
 
-.metaRight { text-align: right; }
-.metaLeft  { text-align: left; padding-left: 30px; }
+.metaRight {
+  text-align: right;
+}
+.metaLeft {
+  text-align: left;
+  padding-left: 30px;
+}
 
 /* ── Input area ── */
 .inputArea {
@@ -238,7 +248,9 @@
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   padding: 8px 8px 8px 14px;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
 }
 
 .inputWrapper:focus-within {

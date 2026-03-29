@@ -1,33 +1,33 @@
-import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { api } from '../services/api.js'
-import { useAuth } from '../contexts/AuthContext.jsx'
-import styles from './AuthPage.module.css'
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { api } from "../services/api.js";
+import { useAuth } from "../contexts/AuthContext.jsx";
+import styles from "./AuthPage.module.css";
 
 export default function LoginPage() {
-  const navigate        = useNavigate()
-  const { login }       = useAuth()
-  const [form, setForm] = useState({ email: '', password: '' })
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
+  const navigate = useNavigate();
+  const { login } = useAuth();
+  const [form, setForm] = useState({ email: "", password: "" });
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const handleChange = (e) =>
-    setForm((f) => ({ ...f, [e.target.name]: e.target.value }))
+    setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
 
   const handleSubmit = async (e) => {
-    e.preventDefault()
-    setError('')
-    setLoading(true)
+    e.preventDefault();
+    setError("");
+    setLoading(true);
     try {
-      const data = await api.login(form.email, form.password)
-      login(data.token, { email: data.email, name: data.name })
-      navigate('/')
+      const data = await api.login(form.email, form.password);
+      login(data.token, { email: data.email, name: data.name });
+      navigate("/");
     } catch (err) {
-      setError(err.message)
+      setError(err.message);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   return (
     <div className={styles.page}>
@@ -80,31 +80,42 @@ export default function LoginPage() {
             className={`btn btn-primary ${styles.submitBtn}`}
             disabled={loading}
           >
-            {loading ? <span className="spinner" /> : 'Sign in'}
+            {loading ? <span className="spinner" /> : "Sign in"}
           </button>
         </form>
 
         <p className={styles.switch}>
-          Don't have an account?{' '}
-          <Link to="/register" className={styles.switchLink}>Create one</Link>
+          Don't have an account?{" "}
+          <Link to="/register" className={styles.switchLink}>
+            Create one
+          </Link>
         </p>
       </div>
     </div>
-  )
+  );
 }
 
 function LogoIcon() {
   return (
     <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-      <rect width="32" height="32" rx="10" fill="var(--teal)" fillOpacity="0.15" />
+      <rect
+        width="32"
+        height="32"
+        rx="10"
+        fill="var(--teal)"
+        fillOpacity="0.15"
+      />
       <path
         d="M8 12a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2v-8Z"
-        stroke="var(--teal)" strokeWidth="1.5"
+        stroke="var(--teal)"
+        strokeWidth="1.5"
       />
       <path
         d="M20 14l4-2v8l-4-2"
-        stroke="var(--teal)" strokeWidth="1.5" strokeLinejoin="round"
+        stroke="var(--teal)"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
       />
     </svg>
-  )
+  );
 }
