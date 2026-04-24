@@ -251,6 +251,7 @@ export default function DashboardPage() {
       {/* Edit Modal */}
       {editingMeeting && (
         <ScheduleModal
+          key={editingMeeting.id + JSON.stringify(editingMeeting.invitees)}
           token={token}
           editMode={true}
           meeting={editingMeeting}

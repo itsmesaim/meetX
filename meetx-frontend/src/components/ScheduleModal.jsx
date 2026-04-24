@@ -14,13 +14,19 @@ export default function ScheduleModal({
     description: editMode && meeting ? meeting.description : "",
     scheduledAt: editMode && meeting ? meeting.scheduledAt?.slice(0, 16) : "",
     durationMinutes: editMode && meeting ? meeting.durationMinutes : 60,
-    invitees: editMode && meeting ? "" : "", // in edit mode this adds NEW invitees only
+    invitees: "",
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [currentInvitees, setCurrentInvitees] = useState(
+    editMode && meeting ? [...(meeting.invitees || [])] : [],
+  );
 
   const handleChange = (e) =>
     setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
+
+  const removeInvitee = (email) =>
+    setCurrentInvitees((prev) => prev.filter((e) => e !== email));
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -42,7 +48,8 @@ export default function ScheduleModal({
       }
     }
 
-    const invitees = form.invitees
+    // Parse new emails to add
+    const newInvitees = form.invitees
       .split(/[\n,]+/)
       .map((e) => e.trim())
       .filter((e) => e.length > 0 && e.includes("@"));
@@ -52,7 +59,6 @@ export default function ScheduleModal({
       let result;
 
       if (editMode) {
-        // PUT /api/meetings/{id} — update existing
         result = await api.updateMeeting(
           meeting.id,
           {
@@ -60,19 +66,19 @@ export default function ScheduleModal({
             description: form.description.trim(),
             scheduledAt: form.scheduledAt || meeting.scheduledAt,
             durationMinutes: Number(form.durationMinutes),
-            newInvitees: invitees,
+            invitees: currentInvitees, // full updated list (with removals)
+            newInvitees, // newly added ones (get invite emails)
           },
           token,
         );
       } else {
-        // POST /api/meetings/schedule — create new
         result = await api.scheduleMeeting(
           {
             title: form.title.trim(),
             description: form.description.trim(),
             scheduledAt: form.scheduledAt,
             durationMinutes: Number(form.durationMinutes),
-            invitees,
+            invitees: newInvitees,
           },
           token,
         );
@@ -174,14 +180,39 @@ export default function ScheduleModal({
             </div>
           </div>
 
-          {/* Invitees */}
+          {/* Current invitees with remove buttons — edit mode only */}
+          {editMode && currentInvitees.length > 0 && (
+            <div className={styles.field}>
+              <label className={styles.label}>Current invitees</label>
+              <div className={styles.pillList}>
+                {currentInvitees.map((email) => (
+                  <span key={email} className={styles.inviteePill}>
+                    {email}
+                    <button
+                      type="button"
+                      className={styles.pillRemove}
+                      onClick={() => removeInvitee(email)}
+                      title={`Remove ${email}`}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <p className={styles.hint}>
+                Click × to remove an invitee before saving.
+              </p>
+            </div>
+          )}
+
+          {/* Add new invitees */}
           <div className={styles.field}>
             <label className={styles.label}>
               {editMode ? (
                 <>
                   Add more people{" "}
                   <span style={{ color: "var(--text-3)", fontWeight: 400 }}>
-                    (existing invitees kept)
+                    (comma separated)
                   </span>
                 </>
               ) : (
@@ -201,19 +232,9 @@ export default function ScheduleModal({
               onChange={handleChange}
               rows={2}
             />
-            {editMode && meeting?.invitees?.length > 0 && (
-              <div className={styles.existingInvitees}>
-                <span className={styles.existingLabel}>Already invited:</span>
-                {meeting.invitees.map((email) => (
-                  <span key={email} className={styles.inviteePill}>
-                    {email}
-                  </span>
-                ))}
-              </div>
-            )}
             <p className={styles.hint}>
               {editMode
-                ? "New invitees will receive an email with the room code."
+                ? "New people added here will receive an invite email."
                 : "Each person will receive an email with the room code and a join link."}
             </p>
           </div>

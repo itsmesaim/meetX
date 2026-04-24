@@ -125,6 +125,39 @@
   margin-top: 8px;
 }
 
+.pillList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.inviteePill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  padding: 3px 10px;
+  color: var(--text-2);
+}
+
+.pillRemove {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0;
+  transition: color 0.15s;
+}
+.pillRemove:hover {
+  color: var(--red);
+}
+
 /* Override select styling */
 select.input-field {
   cursor: pointer;
