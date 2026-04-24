@@ -16,64 +16,36 @@ import org.springframework.web.bind.annotation.*;
 @CrossOrigin(origins = "*")
 public class AuthController {
 
-    private final AuthService authService;
+  private final AuthService authService;
 
-    /**
-     * POST /api/auth/register
-     *
-     * Request body:
-     * {
-     *   "name":     "Saim",
-     *   "email":    "saim@meetx.io",
-     *   "password": "supersecret"
-     * }
-     *
-     * Response (201 Created):
-     * {
-     *   "success": true,
-     *   "message": "Registration successful",
-     *   "data": {
-     *     "token": "<JWT>",
-     *     "email": "saim@meetx.io",
-     *     "name":  "Saim"
-     *   }
-     * }
-     */
-    @PostMapping("/register")
-    public ResponseEntity<ApiResponse<AuthResponse>> register(
-            @RequestBody RegisterRequest request) {
+  /**
+   * POST /api/auth/register
+   *
+   * <p>Request body: { "name": "Saim", "email": "saim@meetx.io", "password": "supersecret" }
+   *
+   * <p>Response (201 Created): { "success": true, "message": "Registration successful", "data": {
+   * "token": "<JWT>", "email": "saim@meetx.io", "name": "Saim" } }
+   */
+  @PostMapping("/register")
+  public ResponseEntity<ApiResponse<AuthResponse>> register(@RequestBody RegisterRequest request) {
 
-        AuthResponse response = authService.register(request);
-        return ResponseEntity
-                .status(HttpStatus.CREATED)
-                .body(ApiResponse.success("Registration successful", response));
-    }
+    AuthResponse response = authService.register(request);
+    return ResponseEntity.status(HttpStatus.CREATED)
+        .body(ApiResponse.success("Registration successful", response));
+  }
 
-    /**
-     * POST /api/auth/login
-     *
-     * Request body:
-     * {
-     *   "email":    "saim@meetx.io",
-     *   "password": "supersecret"
-     * }
-     *
-     * Response (200 OK):
-     * {
-     *   "success": true,
-     *   "message": "Login successful",
-     *   "data": {
-     *     "token": "<JWT>",
-     *     "email": "saim@meetx.io",
-     *     "name":  "Saim"
-     *   }
-     * }
-     */
-    @PostMapping("/login")
-    public ResponseEntity<ApiResponse<AuthResponse>> login(
-            @RequestBody LoginRequest request) {
+  /**
+   * POST /api/auth/login
+   *
+   * <p>Request body: { "email": "saim@meetx.io", "password": "supersecret" }
+   *
+   * <p>Response (200 OK): { "success": true, "message": "Login successful", "data": { "token":
+   * "<JWT>", "email": "saim@meetx.io", "name": "Saim" } }
+   */
+  @PostMapping("/login")
+  public ResponseEntity<ApiResponse<AuthResponse>> login(@RequestBody LoginRequest request) {
 
-        AuthResponse response = authService.login(request);
-        return ResponseEntity.ok(ApiResponse.success("Login successful", response));
-    }
+    AuthResponse response = authService.login(request);
+    return ResponseEntity.ok(ApiResponse.success("Login successful", response));
+  }
 }

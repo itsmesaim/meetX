@@ -5,7 +5,16 @@ async function request(path, options = {}, token = null) {
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
   const res = await fetch(`${BASE}${path}`, { ...options, headers });
-  const body = await res.json();
+
+  const text = await res.text();
+  if (!text) throw new Error("Server returned empty response");
+
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new Error("Invalid response from server");
+  }
 
   if (!res.ok || !body.success) {
     throw new Error(body.message || `Request failed: ${res.status}`);
@@ -77,4 +86,17 @@ export const api = {
 
   cancelMeeting: (id, token) =>
     request(`/meetings/${id}`, { method: "DELETE" }, token),
+
+  updateMeeting: (id, data, token) =>
+    request(
+      `/meetings/${id}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(data),
+      },
+      token,
+    ),
+
+  startMeetingNow: (id, token) =>
+    request(`/meetings/${id}/start`, { method: "POST" }, token),
 };

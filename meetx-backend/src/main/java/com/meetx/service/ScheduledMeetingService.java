@@ -1,19 +1,13 @@
 package com.meetx.service;
 
 import com.meetx.dto.ScheduleMeetingRequest;
+import com.meetx.dto.UpdateMeetingRequest;
 import com.meetx.model.Room;
 import com.meetx.model.ScheduledMeeting;
 import com.meetx.model.User;
 import com.meetx.repository.RoomRepository;
 import com.meetx.repository.ScheduledMeetingRepository;
 import com.meetx.repository.UserRepository;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
 import java.time.LocalDateTime;
@@ -21,176 +15,299 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ScheduledMeetingService {
 
-    private final ScheduledMeetingRepository meetingRepository;
-    private final RoomRepository roomRepository;
-    private final UserRepository userRepository;
-    private final JavaMailSender mailSender;
+  private final ScheduledMeetingRepository meetingRepository;
+  private final RoomRepository roomRepository;
+  private final UserRepository userRepository;
+  private final JavaMailSender mailSender;
 
-    private static final DateTimeFormatter DISPLAY_FMT =
-            DateTimeFormatter.ofPattern("EEEE, MMMM d yyyy 'at' h:mm a");
+  private static final DateTimeFormatter DISPLAY_FMT =
+      DateTimeFormatter.ofPattern("EEEE, MMMM d yyyy 'at' h:mm a");
 
-    // ── Schedule a meeting ────────────────────────────────────
+  // ── Schedule a meeting ────────────────────────────────────
 
-    public ScheduledMeeting scheduleMeeting(String hostEmail, ScheduleMeetingRequest req) {
-        User host = userRepository.findByEmail(hostEmail)
-                .orElseThrow(() -> new RuntimeException("User not found: " + hostEmail));
+  public ScheduledMeeting scheduleMeeting(String hostEmail, ScheduleMeetingRequest req) {
+    User host =
+        userRepository
+            .findByEmail(hostEmail)
+            .orElseThrow(() -> new RuntimeException("User not found: " + hostEmail));
 
-        // Pre-generate a room code for this meeting
-        String roomCode = generateUniqueRoomCode();
+    // Pre-generate a room code for this meeting
+    String roomCode = generateUniqueRoomCode();
 
-        // Save a dormant Room so the code is reserved
-        Room room = Room.builder()
-                .roomCode(roomCode)
-                .createdBy(host.getId())
-                .createdAt(LocalDateTime.now())
-                .active(false)   // will be activated when the meeting starts
-                .participantCount(0)
-                .build();
-        roomRepository.save(room);
+    // Save a dormant Room so the code is reserved
+    Room room =
+        Room.builder()
+            .roomCode(roomCode)
+            .createdBy(host.getId())
+            .createdAt(LocalDateTime.now())
+            .active(false) // will be activated when the meeting starts
+            .participantCount(0)
+            .build();
+    roomRepository.save(room);
 
-        ScheduledMeeting meeting = ScheduledMeeting.builder()
-                .title(req.getTitle())
-                .description(req.getDescription())
-                .hostEmail(hostEmail)
-                .hostName(host.getName())
-                .invitees(req.getInvitees() != null ? req.getInvitees() : new ArrayList<>())
-                .scheduledAt(req.getScheduledAt())
-                .durationMinutes(req.getDurationMinutes() > 0 ? req.getDurationMinutes() : 60)
-                .roomCode(roomCode)
-                .createdAt(LocalDateTime.now())
-                .status("UPCOMING")
-                .build();
+    ScheduledMeeting meeting =
+        ScheduledMeeting.builder()
+            .title(req.getTitle())
+            .description(req.getDescription())
+            .hostEmail(hostEmail)
+            .hostName(host.getName())
+            .invitees(req.getInvitees() != null ? req.getInvitees() : new ArrayList<>())
+            .scheduledAt(req.getScheduledAt())
+            .durationMinutes(req.getDurationMinutes() > 0 ? req.getDurationMinutes() : 60)
+            .roomCode(roomCode)
+            .createdAt(LocalDateTime.now())
+            .status("UPCOMING")
+            .build();
 
-        meeting = meetingRepository.save(meeting);
+    meeting = meetingRepository.save(meeting);
 
-        // Send invite emails to all invitees
-        sendInviteEmails(meeting, host.getName());
+    // Send invite emails to all invitees
+    sendInviteEmails(meeting, host.getName());
 
-        log.info("Meeting scheduled: '{}' by {} for {}", req.getTitle(), hostEmail, req.getScheduledAt());
-        return meeting;
+    log.info(
+        "Meeting scheduled: '{}' by {} for {}", req.getTitle(), hostEmail, req.getScheduledAt());
+    return meeting;
+  }
+
+  // ── Get meetings for a user ───────────────────────────────
+
+  public List<ScheduledMeeting> getMyMeetings(String email) {
+    List<ScheduledMeeting> hosted = meetingRepository.findByHostEmailOrderByScheduledAtAsc(email);
+    List<ScheduledMeeting> invited =
+        meetingRepository.findByInviteesContainingOrderByScheduledAtAsc(email);
+
+    // Merge without duplicates
+    List<ScheduledMeeting> all = new ArrayList<>(hosted);
+    invited.stream()
+        .filter(m -> hosted.stream().noneMatch(h -> h.getId().equals(m.getId())))
+        .forEach(all::add);
+
+    // Only return upcoming and active ones
+    return all.stream()
+        .filter(m -> !"ENDED".equals(m.getStatus()) && !"CANCELLED".equals(m.getStatus()))
+        .filter(
+            m ->
+                m.getHostEmail().equals(email)
+                    || (m.getInvitees() != null && m.getInvitees().contains(email)))
+        .sorted((a, b) -> a.getScheduledAt().compareTo(b.getScheduledAt()))
+        .toList();
+  }
+
+  // ── Scheduler: activate rooms at meeting time ─────────────
+
+  /**
+   * Runs every minute. Activates rooms for meetings that are starting now (within a 2-min window).
+   * Also marks past meetings as ENDED.
+   */
+  @Scheduled(fixedDelay = 60 * 1000)
+  public void processMeetingSchedule() {
+    LocalDateTime now = LocalDateTime.now();
+
+    // Activate upcoming meetings that are starting now
+    List<ScheduledMeeting> starting =
+        meetingRepository.findByStatusAndScheduledAtBefore("UPCOMING", now.plusMinutes(1));
+
+    starting.forEach(
+        meeting -> {
+          // Activate the pre-reserved room
+          roomRepository
+              .findByRoomCode(meeting.getRoomCode())
+              .ifPresent(
+                  room -> {
+                    room.setActive(true);
+                    room.setLastEmptyAt(LocalDateTime.now());
+                    roomRepository.save(room);
+                  });
+
+          meeting.setStatus("ACTIVE");
+          meetingRepository.save(meeting);
+          log.info("Meeting activated: {}", meeting.getTitle());
+        });
+
+    // Mark active meetings as ENDED after their duration
+    List<ScheduledMeeting> active =
+        meetingRepository.findByStatusAndScheduledAtBefore(
+            "ACTIVE", now.minusMinutes(1)); // already started
+
+    active.forEach(
+        meeting -> {
+          LocalDateTime endTime =
+              meeting.getScheduledAt().plusMinutes(meeting.getDurationMinutes());
+
+          if (now.isAfter(endTime)) {
+            meeting.setStatus("ENDED");
+            meetingRepository.save(meeting);
+            log.info("Meeting ended: {}", meeting.getTitle());
+          }
+        });
+  }
+
+  // ── Cancel a meeting ──────────────────────────────────────
+
+  public void cancelMeeting(String meetingId, String requestingEmail) {
+    ScheduledMeeting meeting =
+        meetingRepository
+            .findById(meetingId)
+            .orElseThrow(() -> new RuntimeException("Meeting not found"));
+
+    if (!meeting.getHostEmail().equals(requestingEmail)) {
+      throw new RuntimeException("Only the host can cancel this meeting");
     }
 
-    // ── Get meetings for a user ───────────────────────────────
+    meeting.setStatus("CANCELLED");
+    meetingRepository.save(meeting);
 
-    public List<ScheduledMeeting> getMyMeetings(String email) {
-        List<ScheduledMeeting> hosted  = meetingRepository.findByHostEmailOrderByScheduledAtAsc(email);
-        List<ScheduledMeeting> invited = meetingRepository.findByInviteesContainingOrderByScheduledAtAsc(email);
-
-        // Merge without duplicates
-        List<ScheduledMeeting> all = new ArrayList<>(hosted);
-        invited.stream()
-                .filter(m -> hosted.stream().noneMatch(h -> h.getId().equals(m.getId())))
-                .forEach(all::add);
-
-        // Only return upcoming and active ones
-        return all.stream()
-                .filter(m -> !"ENDED".equals(m.getStatus()) && !"CANCELLED".equals(m.getStatus()))
-                .sorted((a, b) -> a.getScheduledAt().compareTo(b.getScheduledAt()))
-                .toList();
-    }
-
-    // ── Scheduler: activate rooms at meeting time ─────────────
-
-    /**
-     * Runs every minute.
-     * Activates rooms for meetings that are starting now (within a 2-min window).
-     * Also marks past meetings as ENDED.
-     */
-    @Scheduled(fixedDelay = 60 * 1000)
-    public void processMeetingSchedule() {
-        LocalDateTime now = LocalDateTime.now();
-
-        // Activate upcoming meetings that are starting now
-        List<ScheduledMeeting> starting = meetingRepository
-                .findByStatusAndScheduledAtBefore("UPCOMING", now.plusMinutes(1));
-
-        starting.forEach(meeting -> {
-            // Activate the pre-reserved room
-            roomRepository.findByRoomCode(meeting.getRoomCode()).ifPresent(room -> {
-                room.setActive(true);
-                room.setLastEmptyAt(LocalDateTime.now());
-                roomRepository.save(room);
+    // Deactivate the room too
+    roomRepository
+        .findByRoomCode(meeting.getRoomCode())
+        .ifPresent(
+            room -> {
+              room.setActive(false);
+              roomRepository.save(room);
             });
 
-            meeting.setStatus("ACTIVE");
-            meetingRepository.save(meeting);
-            log.info("Meeting activated: {}", meeting.getTitle());
-        });
+    sendCancellationEmails(meeting);
+    log.info("Meeting cancelled: {}", meeting.getTitle());
+  }
 
-        // Mark active meetings as ENDED after their duration
-        List<ScheduledMeeting> active = meetingRepository
-                .findByStatusAndScheduledAtBefore("ACTIVE",
-                        now.minusMinutes(1)); // already started
+  // ── Update meeting ────────────────────────────────────────────
+  public ScheduledMeeting updateMeeting(
+      String meetingId, String requestingEmail, UpdateMeetingRequest req) {
+    ScheduledMeeting meeting =
+        meetingRepository
+            .findById(meetingId)
+            .orElseThrow(() -> new RuntimeException("Meeting not found"));
 
-        active.forEach(meeting -> {
-            LocalDateTime endTime = meeting.getScheduledAt()
-                    .plusMinutes(meeting.getDurationMinutes());
-
-            if (now.isAfter(endTime)) {
-                meeting.setStatus("ENDED");
-                meetingRepository.save(meeting);
-                log.info("Meeting ended: {}", meeting.getTitle());
-            }
-        });
+    if (!meeting.getHostEmail().equals(requestingEmail)) {
+      throw new RuntimeException("Only the host can edit this meeting");
     }
 
-    // ── Cancel a meeting ──────────────────────────────────────
-
-    public void cancelMeeting(String meetingId, String requestingEmail) {
-        ScheduledMeeting meeting = meetingRepository.findById(meetingId)
-                .orElseThrow(() -> new RuntimeException("Meeting not found"));
-
-        if (!meeting.getHostEmail().equals(requestingEmail)) {
-            throw new RuntimeException("Only the host can cancel this meeting");
-        }
-
-        meeting.setStatus("CANCELLED");
-        meetingRepository.save(meeting);
-
-        // Deactivate the room too
-        roomRepository.findByRoomCode(meeting.getRoomCode()).ifPresent(room -> {
-            room.setActive(false);
-            roomRepository.save(room);
-        });
-
-        sendCancellationEmails(meeting);
-        log.info("Meeting cancelled: {}", meeting.getTitle());
+    if ("ENDED".equals(meeting.getStatus()) || "CANCELLED".equals(meeting.getStatus())) {
+      throw new RuntimeException("Cannot edit a meeting that has ended or been cancelled");
     }
 
-    // ── Email helpers ─────────────────────────────────────────
+    // Update fields if provided
+    if (req.getTitle() != null && !req.getTitle().isBlank()) meeting.setTitle(req.getTitle());
 
-    private void sendInviteEmails(ScheduledMeeting meeting, String hostName) {
-        if (meeting.getInvitees() == null || meeting.getInvitees().isEmpty()) return;
+    if (req.getDescription() != null) meeting.setDescription(req.getDescription());
 
-        String subject = "📅 You're invited: " + meeting.getTitle();
-        String formattedTime = meeting.getScheduledAt().format(DISPLAY_FMT);
-        String joinUrl = "http://localhost:3000/room/" + meeting.getRoomCode();
+    if (req.getScheduledAt() != null) meeting.setScheduledAt(req.getScheduledAt());
 
-        String html = buildInviteHtml(meeting, hostName, formattedTime, joinUrl);
+    if (req.getDurationMinutes() > 0) meeting.setDurationMinutes(req.getDurationMinutes());
 
-        for (String invitee : meeting.getInvitees()) {
-            try {
-                sendHtmlEmail(invitee, subject, html);
-                log.debug("Invite sent to {}", invitee);
-            } catch (Exception e) {
-                log.error("Failed to send invite to {}: {}", invitee, e.getMessage());
-            }
-        }
+    // Add new invitees without removing existing ones
+    if (req.getNewInvitees() != null && !req.getNewInvitees().isEmpty()) {
+      List<String> existing =
+          meeting.getInvitees() != null
+              ? new java.util.ArrayList<>(meeting.getInvitees())
+              : new java.util.ArrayList<>();
+
+      List<String> toAdd =
+          req.getNewInvitees().stream()
+              .filter(e -> e.contains("@") && !existing.contains(e))
+              .toList();
+
+      existing.addAll(toAdd);
+      meeting.setInvitees(existing);
+
+      // Send invite emails only to newly added people
+      if (!toAdd.isEmpty()) {
+        User host =
+            userRepository
+                .findByEmail(requestingEmail)
+                .orElseThrow(() -> new RuntimeException("Host not found"));
+        ScheduledMeeting finalMeeting = meeting;
+        toAdd.forEach(
+            email -> {
+              try {
+                String joinUrl = "http://localhost:3000/room/" + finalMeeting.getRoomCode();
+                String formattedTime = finalMeeting.getScheduledAt().format(DISPLAY_FMT);
+                sendHtmlEmail(
+                    email,
+                    "📅 You're invited: " + finalMeeting.getTitle(),
+                    buildInviteHtml(finalMeeting, host.getName(), formattedTime, joinUrl));
+              } catch (Exception e) {
+                log.error("Failed to send invite to {}: {}", email, e.getMessage());
+              }
+            });
+      }
     }
 
-    private void sendCancellationEmails(ScheduledMeeting meeting) {
-        if (meeting.getInvitees() == null || meeting.getInvitees().isEmpty()) return;
+    meeting = meetingRepository.save(meeting);
+    log.info("Meeting updated: {}", meeting.getTitle());
+    return meeting;
+  }
 
-        String subject = "❌ Meeting cancelled: " + meeting.getTitle();
-        String formattedTime = meeting.getScheduledAt().format(DISPLAY_FMT);
+  // ── Start meeting now (activate room immediately) ─────────────
+  public ScheduledMeeting startNow(String meetingId, String requestingEmail) {
+    ScheduledMeeting meeting =
+        meetingRepository
+            .findById(meetingId)
+            .orElseThrow(() -> new RuntimeException("Meeting not found"));
 
-        String html = """
+    if (!meeting.getHostEmail().equals(requestingEmail)) {
+      throw new RuntimeException("Only the host can start this meeting");
+    }
+
+    // Activate the room immediately
+    roomRepository
+        .findByRoomCode(meeting.getRoomCode())
+        .ifPresent(
+            room -> {
+              room.setActive(true);
+              room.setLastEmptyAt(LocalDateTime.now());
+              roomRepository.save(room);
+            });
+
+    meeting.setStatus("ACTIVE");
+    meeting.setScheduledAt(LocalDateTime.now());
+    meetingRepository.save(meeting);
+
+    log.info("Meeting started now: {}", meeting.getTitle());
+    return meeting;
+  }
+
+  // ── Email helpers ─────────────────────────────────────────
+
+  private void sendInviteEmails(ScheduledMeeting meeting, String hostName) {
+    if (meeting.getInvitees() == null || meeting.getInvitees().isEmpty()) return;
+
+    String subject = "📅 You're invited: " + meeting.getTitle();
+    String formattedTime = meeting.getScheduledAt().format(DISPLAY_FMT);
+    String joinUrl = "http://localhost:3000/room/" + meeting.getRoomCode();
+
+    String html = buildInviteHtml(meeting, hostName, formattedTime, joinUrl);
+
+    for (String invitee : meeting.getInvitees()) {
+      try {
+        sendHtmlEmail(invitee, subject, html);
+        log.debug("Invite sent to {}", invitee);
+      } catch (Exception e) {
+        log.error("Failed to send invite to {}: {}", invitee, e.getMessage());
+      }
+    }
+  }
+
+  private void sendCancellationEmails(ScheduledMeeting meeting) {
+    if (meeting.getInvitees() == null || meeting.getInvitees().isEmpty()) return;
+
+    String subject = "❌ Meeting cancelled: " + meeting.getTitle();
+    String formattedTime = meeting.getScheduledAt().format(DISPLAY_FMT);
+
+    String html =
+        """
             <div style="font-family: sans-serif; max-width: 560px; margin: 0 auto; padding: 32px; background: #f9fafb; border-radius: 12px;">
               <h2 style="color: #111827; margin-bottom: 8px;">Meeting Cancelled</h2>
               <p style="color: #6b7280;">The following meeting has been cancelled by the host.</p>
@@ -200,34 +317,35 @@ public class ScheduledMeetingService {
               </div>
               <p style="color: #6b7280; font-size: 14px;">— MeetX</p>
             </div>
-            """.formatted(meeting.getTitle(), formattedTime);
+            """
+            .formatted(meeting.getTitle(), formattedTime);
 
-        for (String invitee : meeting.getInvitees()) {
-            try {
-                sendHtmlEmail(invitee, subject, html);
-            } catch (Exception e) {
-                log.error("Failed to send cancellation to {}: {}", invitee, e.getMessage());
-            }
-        }
+    for (String invitee : meeting.getInvitees()) {
+      try {
+        sendHtmlEmail(invitee, subject, html);
+      } catch (Exception e) {
+        log.error("Failed to send cancellation to {}: {}", invitee, e.getMessage());
+      }
     }
+  }
 
-    private void sendHtmlEmail(String to, String subject, String htmlBody)
-            throws MessagingException {
-        MimeMessage message = mailSender.createMimeMessage();
-        MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-        helper.setTo(to);
-        helper.setSubject(subject);
-        helper.setText(htmlBody, true);   // true = html
-        mailSender.send(message);
-    }
+  private void sendHtmlEmail(String to, String subject, String htmlBody) throws MessagingException {
+    MimeMessage message = mailSender.createMimeMessage();
+    MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+    helper.setTo(to);
+    helper.setSubject(subject);
+    helper.setText(htmlBody, true); // true = html
+    mailSender.send(message);
+  }
 
-    private String buildInviteHtml(ScheduledMeeting meeting, String hostName,
-                                    String formattedTime, String joinUrl) {
-        String description = (meeting.getDescription() != null && !meeting.getDescription().isBlank())
-                ? "<p style=\"color:#6b7280; margin: 8px 0 0;\">" + meeting.getDescription() + "</p>"
-                : "";
+  private String buildInviteHtml(
+      ScheduledMeeting meeting, String hostName, String formattedTime, String joinUrl) {
+    String description =
+        (meeting.getDescription() != null && !meeting.getDescription().isBlank())
+            ? "<p style=\"color:#6b7280; margin: 8px 0 0;\">" + meeting.getDescription() + "</p>"
+            : "";
 
-        return """
+    return """
             <div style="font-family: sans-serif; max-width: 560px; margin: 0 auto; background: #f9fafb; border-radius: 12px; overflow: hidden;">
               <!-- Header -->
               <div style="background: #06070d; padding: 28px 32px;">
@@ -284,30 +402,26 @@ public class ScheduledMeetingService {
                 </p>
               </div>
             </div>
-            """.formatted(
-                hostName,
-                meeting.getTitle(),
-                description,
-                formattedTime,
-                meeting.getDurationMinutes(),
-                meeting.getRoomCode(),
-                joinUrl,
-                joinUrl
-        );
-    }
+            """
+        .formatted(
+            hostName,
+            meeting.getTitle(),
+            description,
+            formattedTime,
+            meeting.getDurationMinutes(),
+            meeting.getRoomCode(),
+            joinUrl,
+            joinUrl);
+  }
 
-    // ── Private helpers ───────────────────────────────────────
+  // ── Private helpers ───────────────────────────────────────
 
-    private String generateUniqueRoomCode() {
-        String code;
-        do {
-            String hex = UUID.randomUUID()
-                    .toString()
-                    .replace("-", "")
-                    .toUpperCase()
-                    .substring(0, 8);
-            code = hex.substring(0, 4) + "-" + hex.substring(4, 8);
-        } while (roomRepository.existsByRoomCode(code));
-        return code;
-    }
+  private String generateUniqueRoomCode() {
+    String code;
+    do {
+      String hex = UUID.randomUUID().toString().replace("-", "").toUpperCase().substring(0, 8);
+      code = hex.substring(0, 4) + "-" + hex.substring(4, 8);
+    } while (roomRepository.existsByRoomCode(code));
+    return code;
+  }
 }

@@ -8,7 +8,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class LiveKitTokenResponse {
-    private String token;
-    private String roomCode;
-    private String participantName;
+  private String token;
+  private String roomCode;
+  private String participantName;
 }

@@ -14,14 +14,22 @@ export default function DashboardPage() {
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState("");
   const [showSchedule, setShowSchedule] = useState(false);
+  const [editingMeeting, setEditingMeeting] = useState(null);
   const [meetings, setMeetings] = useState([]);
   const [loadingMeetings, setLoadingMeetings] = useState(true);
 
-  // Load upcoming meetings
   useEffect(() => {
     api
       .getMyMeetings(token)
-      .then(setMeetings)
+      .then((data) => {
+        setMeetings(
+          data.filter(
+            (m) =>
+              m.hostEmail === user?.email ||
+              (m.invitees && m.invitees.includes(user?.email)),
+          ),
+        );
+      })
       .catch(() => {})
       .finally(() => setLoadingMeetings(false));
   }, [token]);
@@ -63,10 +71,24 @@ export default function DashboardPage() {
     setShowSchedule(false);
   };
 
+  const handleUpdated = (updated) => {
+    setMeetings((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+    setEditingMeeting(null);
+  };
+
   const handleCancelMeeting = async (id) => {
     try {
       await api.cancelMeeting(id, token);
       setMeetings((prev) => prev.filter((m) => m.id !== id));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleStartNow = async (id, roomCode) => {
+    try {
+      await api.startMeetingNow(id, token);
+      navigate(`/room/${roomCode}`);
     } catch (err) {
       setError(err.message);
     }
@@ -184,7 +206,6 @@ export default function DashboardPage() {
             <h2 className={styles.upcomingTitle}>
               <CalendarIcon /> Upcoming meetings
             </h2>
-
             {loadingMeetings ? (
               <div className={styles.upcomingLoading}>
                 <span className="spinner spinner-light" />
@@ -198,6 +219,8 @@ export default function DashboardPage() {
                     userEmail={user?.email}
                     onJoin={() => navigate(`/room/${m.roomCode}`)}
                     onCancel={() => handleCancelMeeting(m.id)}
+                    onEdit={() => setEditingMeeting(m)}
+                    onStartNow={() => handleStartNow(m.id, m.roomCode)}
                   />
                 ))}
               </div>
@@ -224,16 +247,34 @@ export default function DashboardPage() {
           onScheduled={handleScheduled}
         />
       )}
+
+      {/* Edit Modal */}
+      {editingMeeting && (
+        <ScheduleModal
+          token={token}
+          editMode={true}
+          meeting={editingMeeting}
+          onClose={() => setEditingMeeting(null)}
+          onScheduled={handleUpdated}
+        />
+      )}
     </div>
   );
 }
 
 /* ── Meeting card ─────────────────────────────────────────────── */
-function MeetingCard({ meeting, userEmail, onJoin, onCancel }) {
+function MeetingCard({
+  meeting,
+  userEmail,
+  onJoin,
+  onCancel,
+  onEdit,
+  onStartNow,
+}) {
   const isHost = meeting.hostEmail === userEmail;
   const start = new Date(meeting.scheduledAt);
   const now = new Date();
-  const isNow = Math.abs(now - start) < 15 * 60 * 1000; // within 15 min
+  const isNow = Math.abs(now - start) < 15 * 60 * 1000;
 
   const fmt = (d) =>
     d.toLocaleString([], {
@@ -271,7 +312,19 @@ function MeetingCard({ meeting, userEmail, onJoin, onCancel }) {
       </div>
 
       <div className={styles.meetingActions}>
-        {isNow && (
+        {/* Start now — host, upcoming only */}
+        {isHost && meeting.status === "UPCOMING" && (
+          <button
+            className="btn btn-primary"
+            onClick={onStartNow}
+            style={{ height: 38, fontSize: "0.82rem" }}
+          >
+            ▶ Start now
+          </button>
+        )}
+
+        {/* Join — active meetings */}
+        {(isNow || meeting.status === "ACTIVE") && (
           <button
             className="btn btn-primary"
             onClick={onJoin}
@@ -280,7 +333,20 @@ function MeetingCard({ meeting, userEmail, onJoin, onCancel }) {
             Join now
           </button>
         )}
-        {isHost && (
+
+        {/* Edit — host, upcoming only */}
+        {isHost && meeting.status === "UPCOMING" && (
+          <button
+            className="btn btn-ghost"
+            onClick={onEdit}
+            style={{ height: 38, fontSize: "0.82rem" }}
+          >
+            ✏ Edit
+          </button>
+        )}
+
+        {/* Cancel — host only */}
+        {isHost && meeting.status !== "ENDED" && (
           <button
             className="btn btn-danger"
             onClick={onCancel}

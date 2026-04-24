@@ -1,5 +1,6 @@
 package com.meetx.model;
 
+import java.time.LocalDateTime;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -8,8 +9,6 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
-import java.time.LocalDateTime;
-
 @Data
 @Builder
 @NoArgsConstructor
@@ -17,15 +16,13 @@ import java.time.LocalDateTime;
 @Document(collection = "chat_messages")
 public class ChatMessage {
 
-    @Id
-    private String id;
+  @Id private String id;
 
-    @Indexed
-    private String roomCode;
+  @Indexed private String roomCode;
 
-    private String sender;     // display name / email of the sender
+  private String sender; // display name / email of the sender
 
-    private String content;
+  private String content;
 
-    private LocalDateTime timestamp;
+  private LocalDateTime timestamp;
 }

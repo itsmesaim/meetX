@@ -2,13 +2,19 @@ import { useState } from "react";
 import { api } from "../services/api.js";
 import styles from "./ScheduleModal.module.css";
 
-export default function ScheduleModal({ token, onClose, onScheduled }) {
+export default function ScheduleModal({
+  token,
+  onClose,
+  onScheduled,
+  editMode = false,
+  meeting = null,
+}) {
   const [form, setForm] = useState({
-    title: "",
-    description: "",
-    scheduledAt: "",
-    durationMinutes: 60,
-    invitees: "",
+    title: editMode && meeting ? meeting.title : "",
+    description: editMode && meeting ? meeting.description : "",
+    scheduledAt: editMode && meeting ? meeting.scheduledAt?.slice(0, 16) : "",
+    durationMinutes: editMode && meeting ? meeting.durationMinutes : 60,
+    invitees: editMode && meeting ? "" : "", // in edit mode this adds NEW invitees only
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -24,16 +30,18 @@ export default function ScheduleModal({ token, onClose, onScheduled }) {
       setError("Meeting title is required");
       return;
     }
-    if (!form.scheduledAt) {
-      setError("Please pick a date and time");
-      return;
-    }
-    if (new Date(form.scheduledAt) <= new Date()) {
-      setError("Scheduled time must be in the future");
-      return;
+
+    if (!editMode) {
+      if (!form.scheduledAt) {
+        setError("Please pick a date and time");
+        return;
+      }
+      if (new Date(form.scheduledAt) <= new Date()) {
+        setError("Scheduled time must be in the future");
+        return;
+      }
     }
 
-    // Parse comma/newline-separated emails
     const invitees = form.invitees
       .split(/[\n,]+/)
       .map((e) => e.trim())
@@ -41,18 +49,36 @@ export default function ScheduleModal({ token, onClose, onScheduled }) {
 
     setLoading(true);
     try {
-      const meeting = await api.scheduleMeeting(
-        {
-          title: form.title.trim(),
-          description: form.description.trim(),
-          scheduledAt: form.scheduledAt,
-          durationMinutes: Number(form.durationMinutes),
-          invitees,
-        },
-        token,
-      );
+      let result;
 
-      onScheduled(meeting);
+      if (editMode) {
+        // PUT /api/meetings/{id} — update existing
+        result = await api.updateMeeting(
+          meeting.id,
+          {
+            title: form.title.trim(),
+            description: form.description.trim(),
+            scheduledAt: form.scheduledAt || meeting.scheduledAt,
+            durationMinutes: Number(form.durationMinutes),
+            newInvitees: invitees,
+          },
+          token,
+        );
+      } else {
+        // POST /api/meetings/schedule — create new
+        result = await api.scheduleMeeting(
+          {
+            title: form.title.trim(),
+            description: form.description.trim(),
+            scheduledAt: form.scheduledAt,
+            durationMinutes: Number(form.durationMinutes),
+            invitees,
+          },
+          token,
+        );
+      }
+
+      onScheduled(result);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -60,7 +86,6 @@ export default function ScheduleModal({ token, onClose, onScheduled }) {
     }
   };
 
-  // Minimum datetime = now + 5 min (for the datetime-local input)
   const minDateTime = new Date(Date.now() + 5 * 60 * 1000)
     .toISOString()
     .slice(0, 16);
@@ -75,7 +100,9 @@ export default function ScheduleModal({ token, onClose, onScheduled }) {
         <div className={styles.header}>
           <div className={styles.headerLeft}>
             <CalendarIcon />
-            <h2 className={styles.title}>Schedule a meeting</h2>
+            <h2 className={styles.title}>
+              {editMode ? "Edit meeting" : "Schedule a meeting"}
+            </h2>
           </div>
           <button className={styles.closeBtn} onClick={onClose} title="Close">
             <CloseIcon />
@@ -116,7 +143,9 @@ export default function ScheduleModal({ token, onClose, onScheduled }) {
           {/* Date + Duration */}
           <div className={styles.row}>
             <div className={styles.field}>
-              <label className={styles.label}>Date & time *</label>
+              <label className={styles.label}>
+                Date & time {!editMode && "*"}
+              </label>
               <input
                 className="input-field"
                 type="datetime-local"
@@ -124,7 +153,7 @@ export default function ScheduleModal({ token, onClose, onScheduled }) {
                 value={form.scheduledAt}
                 onChange={handleChange}
                 min={minDateTime}
-                required
+                required={!editMode}
               />
             </div>
             <div className={styles.field} style={{ maxWidth: 140 }}>
@@ -148,10 +177,21 @@ export default function ScheduleModal({ token, onClose, onScheduled }) {
           {/* Invitees */}
           <div className={styles.field}>
             <label className={styles.label}>
-              Invite people{" "}
-              <span style={{ color: "var(--text-3)", fontWeight: 400 }}>
-                (optional — emails, comma separated)
-              </span>
+              {editMode ? (
+                <>
+                  Add more people{" "}
+                  <span style={{ color: "var(--text-3)", fontWeight: 400 }}>
+                    (existing invitees kept)
+                  </span>
+                </>
+              ) : (
+                <>
+                  Invite people{" "}
+                  <span style={{ color: "var(--text-3)", fontWeight: 400 }}>
+                    (optional — emails, comma separated)
+                  </span>
+                </>
+              )}
             </label>
             <textarea
               className={`input-field ${styles.textarea}`}
@@ -161,9 +201,20 @@ export default function ScheduleModal({ token, onClose, onScheduled }) {
               onChange={handleChange}
               rows={2}
             />
+            {editMode && meeting?.invitees?.length > 0 && (
+              <div className={styles.existingInvitees}>
+                <span className={styles.existingLabel}>Already invited:</span>
+                {meeting.invitees.map((email) => (
+                  <span key={email} className={styles.inviteePill}>
+                    {email}
+                  </span>
+                ))}
+              </div>
+            )}
             <p className={styles.hint}>
-              Each person will receive an email with the room code and a join
-              link.
+              {editMode
+                ? "New invitees will receive an email with the room code."
+                : "Each person will receive an email with the room code and a join link."}
             </p>
           </div>
 
@@ -179,6 +230,8 @@ export default function ScheduleModal({ token, onClose, onScheduled }) {
             >
               {loading ? (
                 <span className="spinner" />
+              ) : editMode ? (
+                <>💾 Save changes</>
               ) : (
                 <>
                   <CalendarIcon /> Schedule & send invites

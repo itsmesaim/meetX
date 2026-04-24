@@ -1,5 +1,6 @@
 package com.meetx.model;
 
+import java.time.LocalDateTime;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -8,8 +9,6 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
-import java.time.LocalDateTime;
-
 @Data
 @Builder
 @NoArgsConstructor
@@ -17,15 +16,14 @@ import java.time.LocalDateTime;
 @Document(collection = "users")
 public class User {
 
-    @Id
-    private String id;
+  @Id private String id;
 
-    private String name;
+  private String name;
 
-    @Indexed(unique = true)
-    private String email;
+  @Indexed(unique = true)
+  private String email;
 
-    private String password;   // BCrypt-hashed
+  private String password; // BCrypt-hashed
 
-    private LocalDateTime createdAt;
+  private LocalDateTime createdAt;
 }
