@@ -29,6 +29,44 @@ export default function RoomPage() {
   const [tokenError, setTokenError] = useState("");
   const [chatOpen, setChatOpen] = useState(true);
 
+  // ── Prevent background disconnect ────────────────────────────
+  useEffect(() => {
+    // 1. Wake Lock — prevents phone screen from sleeping
+    let wakeLock = null;
+    const requestWakeLock = async () => {
+      try {
+        if ("wakeLock" in navigator) {
+          wakeLock = await navigator.wakeLock.request("screen");
+        }
+      } catch (e) {}
+    };
+    requestWakeLock();
+
+    // 2. Re-request wake lock when tab becomes visible again
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    // 3. Keep-alive ping every 15s so server doesn't drop the connection
+    const keepAlive = setInterval(() => {
+      if (token && code) {
+        fetch(`/api/rooms/${code}/token?participantName=ping`, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {});
+      }
+    }, 15000);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      clearInterval(keepAlive);
+      if (wakeLock) wakeLock.release().catch(() => {});
+    };
+  }, [code, token]);
+
   // Validate room exists → then get LiveKit token
   useEffect(() => {
     if (!code || !token) return;
@@ -74,6 +112,10 @@ export default function RoomPage() {
         audio={false}
         onConnected={handleConnected}
         onDisconnected={handleDisconnected}
+        options={{
+          disconnectOnPageLeave: false,
+          stopLocalTrackOnUnpublish: false,
+        }}
         className={styles.lkRoom}
       >
         <RoomAudioRenderer />
