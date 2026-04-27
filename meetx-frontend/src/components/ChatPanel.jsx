@@ -6,11 +6,11 @@ export default function ChatPanel({
   onSend,
   connected,
   currentUser,
+  onClose,
 }) {
   const [input, setInput] = useState("");
   const bottomRef = useRef(null);
 
-  // Auto-scroll to latest message
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -22,153 +22,121 @@ export default function ChatPanel({
     setInput("");
   };
 
-  const handleKey = (e) => {
-    // Send on Enter, new line on Shift+Enter
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend(e);
-    }
-  };
-
   const fmt = (ts) => {
     if (!ts) return "";
     try {
-      const d = new Date(ts);
-      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      return new Date(ts).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
     } catch {
       return "";
     }
   };
 
-  // Group consecutive messages from the same sender
   const grouped = messages.reduce((acc, msg, i) => {
     const prev = messages[i - 1];
-    const isFirst = !prev || prev.sender !== msg.sender;
-    acc.push({ ...msg, isFirst });
+    acc.push({ ...msg, isFirst: !prev || prev.sender !== msg.sender });
     return acc;
   }, []);
 
   return (
     <div className={styles.panel}>
-      {/* Header */}
+      {/* Handle bar + header */}
       <div className={styles.header}>
-        <div className={styles.headerLeft}>
-          <ChatBubbleIcon />
-          <span className={styles.title}>Chat</span>
-          {messages.length > 0 && (
-            <span className={styles.count}>{messages.length}</span>
-          )}
-        </div>
-        <div className={styles.statusPill}>
-          <span
-            className={`${styles.dot} ${connected ? styles.dotOn : styles.dotOff}`}
-          />
-          <span className={styles.statusLabel}>
-            {connected ? "Live" : "Connecting…"}
-          </span>
+        <div className={styles.handle} />
+        <div className={styles.headerRow}>
+          <div className={styles.headerLeft}>
+            <span className={styles.title}>Chat</span>
+            {messages.length > 0 && (
+              <span className={styles.count}>{messages.length}</span>
+            )}
+          </div>
+          <div className={styles.headerRight}>
+            <div
+              className={`${styles.dot} ${connected ? styles.dotOn : styles.dotOff}`}
+            />
+            <span className={styles.status}>
+              {connected ? "Live" : "Connecting…"}
+            </span>
+            {onClose && (
+              <button className={styles.closeBtn} onClick={onClose}>
+                ×
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Messages */}
       <div className={styles.messages}>
         {grouped.length === 0 && (
-          <div className={styles.emptyState}>
-            <span className={styles.emptyIcon}>💬</span>
+          <div className={styles.empty}>
             <p className={styles.emptyTitle}>No messages yet</p>
-            <p className={styles.emptySub}>Be the first to say hello!</p>
+            <p className={styles.emptySub}>Say hello 👋</p>
           </div>
         )}
-
         {grouped.map((m, i) => {
           const mine = m.sender === currentUser;
           return (
             <div
               key={m.id || i}
-              className={`
-                ${styles.msgGroup}
-                ${mine ? styles.mine : styles.theirs}
-                ${m.isFirst ? styles.first : styles.continued}
-              `}
+              className={`${styles.group} ${mine ? styles.mine : styles.theirs} ${m.isFirst ? styles.first : styles.cont}`}
             >
-              {/* Sender avatar + name — only for first in a run, not mine */}
               {!mine && m.isFirst && (
                 <div className={styles.senderRow}>
                   <div className={styles.avatar}>
                     {(m.sender || "?")[0].toUpperCase()}
                   </div>
-                  <span className={styles.senderName}>{m.sender}</span>
+                  <span className={styles.sender}>{m.sender}</span>
                 </div>
               )}
-
               <div className={styles.bubbleRow}>
-                {/* Spacer keeps "theirs" bubbles right-aligned under avatar */}
-                {!mine && !m.isFirst && <div className={styles.avatarSpacer} />}
-
+                {!mine && !m.isFirst && <div className={styles.spacer} />}
                 <div
                   className={`${styles.bubble} ${mine ? styles.bubbleMine : styles.bubbleTheirs}`}
                 >
                   {m.content}
                 </div>
               </div>
-
               <div
-                className={`${styles.meta} ${mine ? styles.metaRight : styles.metaLeft}`}
+                className={`${styles.time} ${mine ? styles.timeRight : styles.timeLeft}`}
               >
                 {fmt(m.timestamp)}
               </div>
             </div>
           );
         })}
-
         <div ref={bottomRef} />
       </div>
 
       {/* Input */}
       <form className={styles.inputArea} onSubmit={handleSend}>
-        <div className={styles.inputWrapper}>
+        <div className={styles.inputRow}>
           <textarea
             className={styles.textarea}
-            placeholder={
-              connected
-                ? "Type a message… (Enter to send)"
-                : "Connecting to chat…"
-            }
+            placeholder={connected ? "Message…" : "Connecting…"}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKey}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSend(e);
+              }
+            }}
             disabled={!connected}
             rows={1}
-            autoComplete="off"
           />
           <button
             type="submit"
             className={styles.sendBtn}
             disabled={!connected || !input.trim()}
-            title="Send message"
           >
             <SendIcon />
           </button>
         </div>
       </form>
     </div>
-  );
-}
-
-/* ── Icons ── */
-function ChatBubbleIcon() {
-  return (
-    <svg
-      width="15"
-      height="15"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-    </svg>
   );
 }
 

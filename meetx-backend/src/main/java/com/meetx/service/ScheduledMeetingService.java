@@ -202,7 +202,7 @@ public class ScheduledMeetingService {
                 ScheduledMeeting finalMeeting = meeting;
                 toAdd.forEach(email -> {
                     try {
-                        String joinUrl    = "http://localhost:3000/room/" + finalMeeting.getRoomCode();
+                        String joinUrl = "https://meetx.saimjs.com/room/" + finalMeeting.getRoomCode();
                         String fmtTime    = finalMeeting.getScheduledAt().format(DISPLAY_FMT);
                         sendHtmlEmail(email,
                                 "📅 You're invited: " + finalMeeting.getTitle(),
@@ -250,7 +250,7 @@ public class ScheduledMeetingService {
 
         String subject      = "📅 You're invited: " + meeting.getTitle();
         String formattedTime = meeting.getScheduledAt().format(DISPLAY_FMT);
-        String joinUrl      = "http://localhost:3000/room/" + meeting.getRoomCode();
+        String joinUrl      = "https://meetx.saimjs.com/room/" + meeting.getRoomCode();
         String html         = buildInviteHtml(meeting, hostName, formattedTime, joinUrl);
 
         for (String invitee : meeting.getInvitees()) {
