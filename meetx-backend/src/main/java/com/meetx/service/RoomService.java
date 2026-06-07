@@ -27,22 +27,20 @@ public class RoomService {
   // ── Create ────────────────────────────────────────────────
 
   public CreateRoomResponse createRoom(String email) {
-    User user =
-        userRepository
-            .findByEmail(email)
-            .orElseThrow(() -> new RuntimeException("User not found: " + email));
+    User user = userRepository
+        .findByEmail(email)
+        .orElseThrow(() -> new RuntimeException("User not found: " + email));
 
     String roomCode = generateUniqueRoomCode();
 
-    Room room =
-        Room.builder()
-            .roomCode(roomCode)
-            .createdBy(user.getId())
-            .createdAt(LocalDateTime.now())
-            .active(true)
-            .participantCount(0)
-            .lastEmptyAt(LocalDateTime.now()) // starts "empty" from creation
-            .build();
+    Room room = Room.builder()
+        .roomCode(roomCode)
+        .createdBy(user.getId())
+        .createdAt(LocalDateTime.now())
+        .active(true)
+        .participantCount(0)
+        .lastEmptyAt(LocalDateTime.now()) // starts "empty" from creation
+        .build();
 
     room = roomRepository.save(room);
     log.debug("Room created: {} by {}", roomCode, email);
@@ -61,7 +59,8 @@ public class RoomService {
   }
 
   /**
-   * Called when a participant joins the LiveKit room. Increments participantCount and clears the
+   * Called when a participant joins the LiveKit room. Increments participantCount
+   * and clears the
    * lastEmptyAt timer.
    */
   public void onParticipantJoin(String roomCode) {
@@ -78,7 +77,8 @@ public class RoomService {
   }
 
   /**
-   * Called when a participant leaves the LiveKit room. Decrements participantCount. If it hits 0,
+   * Called when a participant leaves the LiveKit room. Decrements
+   * participantCount. If it hits 0,
    * starts the 30-min countdown.
    */
   public void onParticipantLeave(String roomCode) {
@@ -101,15 +101,13 @@ public class RoomService {
   // ── Soft-close (manual by creator) ───────────────────────
 
   public void closeRoom(String roomCode, String requestingEmail) {
-    User user =
-        userRepository
-            .findByEmail(requestingEmail)
-            .orElseThrow(() -> new RuntimeException("User not found: " + requestingEmail));
+    User user = userRepository
+        .findByEmail(requestingEmail)
+        .orElseThrow(() -> new RuntimeException("User not found: " + requestingEmail));
 
-    Room room =
-        roomRepository
-            .findByRoomCode(roomCode)
-            .orElseThrow(() -> new RuntimeException("Room not found: " + roomCode));
+    Room room = roomRepository
+        .findByRoomCode(roomCode)
+        .orElseThrow(() -> new RuntimeException("Room not found: " + roomCode));
 
     if (!room.getCreatedBy().equals(user.getId())) {
       throw new RuntimeException("Only the room creator can close this room");
@@ -120,10 +118,57 @@ public class RoomService {
     log.debug("Room {} manually closed by {}", roomCode, requestingEmail);
   }
 
+  public void admitUser(String roomCode, String email) {
+    Room room = roomRepository.findByRoomCode(roomCode)
+        .orElseThrow(() -> new RuntimeException("Room not found"));
+    if (email != null) {
+      //  Null check 
+      if (room.getAdmittedEmails() == null) {
+        room.setAdmittedEmails(new java.util.HashSet<>());
+      }
+      room.getAdmittedEmails().add(email.toLowerCase().trim());
+      roomRepository.save(room);
+    }
+  }
+
+  public boolean isAdmitted(String roomCode, String email) {
+    if (email == null)
+      return false;
+    return roomRepository.findByRoomCode(roomCode)
+        .map(r -> {
+          //  Null check here too
+          if (r.getAdmittedEmails() == null)
+            return false;
+          return r.getAdmittedEmails().contains(email.toLowerCase().trim());
+        })
+        .orElse(false);
+  }
+
+  public void denyUser(String roomCode, String email) {
+    Room room = roomRepository.findByRoomCode(roomCode)
+        .orElseThrow(() -> new RuntimeException("Room not found"));
+    if (email != null) {
+      if (room.getDeniedEmails() == null)
+        room.setDeniedEmails(new java.util.HashSet<>());
+      room.getDeniedEmails().add(email.toLowerCase().trim());
+      roomRepository.save(room);
+    }
+  }
+
+  public boolean isDenied(String roomCode, String email) {
+    if (email == null)
+      return false;
+    return roomRepository.findByRoomCode(roomCode)
+        .map(r -> r.getDeniedEmails() != null &&
+            r.getDeniedEmails().contains(email.toLowerCase().trim()))
+        .orElse(false);
+  }
+
   // ── Scheduler: auto-close empty rooms after 30 mins ──────
 
   /**
-   * Runs every 5 minutes. Finds all active rooms that have been empty for 30+ minutes and closes
+   * Runs every 5 minutes. Finds all active rooms that have been empty for 30+
+   * minutes and closes
    * them.
    */
   @Scheduled(fixedDelay = 5 * 60 * 1000) // every 5 minutes

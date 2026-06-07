@@ -9,6 +9,8 @@ import {
   useLocalParticipant,
 } from "@livekit/components-react";
 import { Track } from "livekit-client";
+import { Client } from "@stomp/stompjs";
+import SockJS from "sockjs-client";
 import { api } from "../services/api.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import { useTheme } from "../contexts/ThemeContext.jsx";
@@ -16,34 +18,40 @@ import { useChat } from "../hooks/useChat.js";
 import ChatPanel from "../components/ChatPanel.jsx";
 import styles from "./RoomPage.module.css";
 
-const LIVEKIT_URL =
-  import.meta.env.VITE_LIVEKIT_URL || "wss://your-livekit-host.livekit.cloud";
+const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL;
 
 export default function RoomPage() {
   const { code } = useParams();
   const navigate = useNavigate();
   const { token, user } = useAuth();
   const { theme, toggle: toggleTheme } = useTheme();
+
   const [lkToken, setLkToken] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [tokenError, setError] = useState("");
+  const [error, setError] = useState("");
+  const [isHost, setIsHost] = useState(false);
+  const [waitingUsers, setWaiting] = useState([]);
+  const [admissionState, setAdmission] = useState("idle");
   const [chatOpen, setChatOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [showInvite, setShowInvite] = useState(false);
   const [copied, setCopied] = useState(false);
   const [seconds, setSeconds] = useState(0);
 
-  useEffect(() => {
-    if (!code || !token) return;
-    setLoading(true);
-    api
-      .joinRoom(code, token)
-      .then(() => api.getLiveKitToken(code, user?.name || user?.email, token))
-      .then((d) => setLkToken(d.token))
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [code, token, user]);
+  const stompRef = useRef(null);
+  const initDoneRef = useRef(false); // StrictMode double-run fix
+  const handledRef = useRef(new Set()); // Tracks admitted/denied emails
 
+  const userName = user?.name || user?.email || "Guest";
+  const userEmail = user?.email || user?.name || "guest";
+
+  // ── Timer ─────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const id = setInterval(() => setSeconds((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // ── Wake lock ─────────────────────────────────────────────────────────────
   useEffect(() => {
     let wl = null;
     const req = async () => {
@@ -57,22 +65,202 @@ export default function RoomPage() {
       if (document.visibilityState === "visible") req();
     };
     document.addEventListener("visibilitychange", onVis);
-    const tid = setInterval(() => setSeconds((s) => s + 1), 1000);
     return () => {
-      clearInterval(tid);
       document.removeEventListener("visibilitychange", onVis);
-      if (wl) wl.release().catch(() => {});
+      wl?.release().catch(() => {});
     };
   }, []);
+
+  // ── Join flow ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!code || !token) return;
+    if (initDoneRef.current) return;
+    initDoneRef.current = true;
+    setLoading(true);
+
+    // Read & immediately clear sessionStorage (before any async)
+    const sessionHost = sessionStorage.getItem("meetx_host_room") === code;
+    if (sessionHost) sessionStorage.removeItem("meetx_host_room");
+
+    // Check localStorage for persisted role (refresh case)
+    const savedRole = localStorage.getItem(`meetx_role_${code}`);
+    const amHost = sessionHost || savedRole === "host";
+    const canAutoJoin = amHost || savedRole === "admitted";
+
+    // Persist host role
+    if (sessionHost) localStorage.setItem(`meetx_role_${code}`, "host");
+    setIsHost(amHost);
+
+    api
+      .joinRoom(code, token)
+      .then(async () => {
+        if (canAutoJoin) {
+          // Host or previously admitted — enter directly
+          const lkData = await api.getLiveKitToken(code, userName, token);
+          setLkToken(lkData.token);
+          setAdmission("admitted");
+          if (amHost) {
+            setupHostStomp(code);
+          } else {
+            setupGuestStompAdmitted(code); // listen for kicks only
+          }
+        } else {
+          // New guest — wait for admission
+          setupGuestStomp(code);
+          setAdmission("waiting");
+        }
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [code, token]);
+
+  // ── Host STOMP — listen for knocks & manage kicks ─────────────────────────
+  const setupHostStomp = (roomCode) => {
+    const client = new Client({
+      webSocketFactory: () => new SockJS("/ws"),
+      reconnectDelay: 3000,
+      onConnect: () => {
+        console.log(" Host STOMP connected");
+
+        client.subscribe(`/topic/room/${roomCode}/knocks`, (msg) => {
+          const knock = JSON.parse(msg.body);
+          if (handledRef.current.has(knock.email)) return;
+          setWaiting((prev) =>
+            prev.find((u) => u.email === knock.email) ? prev : [...prev, knock],
+          );
+        });
+
+        client.subscribe(`/topic/room/${roomCode}/kicks`, () => {});
+      },
+      onStompError: (frame) => {
+        console.error("❌ Host STOMP error:", frame);
+      },
+    });
+    client.activate();
+    stompRef.current = client;
+  };
+
+  // ── Guest STOMP,  waiting for admission ───────────────────────────────────
+  const setupGuestStomp = (roomCode) => {
+    let pollInterval = null;
+
+    // Poll REST every 2 seconds
+    const startPolling = () => {
+      pollInterval = setInterval(async () => {
+        try {
+          const result = await api.checkAdmission(roomCode, userEmail, token);
+          if (result?.admitted) {
+            clearInterval(pollInterval);
+            const lkData = await api.getLiveKitToken(roomCode, userName, token);
+            setLkToken(lkData.token);
+            localStorage.setItem(`meetx_role_${roomCode}`, "admitted");
+            setAdmission("admitted");
+            setupGuestStompAdmitted(roomCode);
+          } else if (result?.denied) {
+            //  Denied. stop everything
+            clearInterval(pollInterval);
+            client.deactivate();
+            setAdmission("rejected");
+          }
+        } catch {}
+      }, 2000);
+    };
+
+    // STOMP only for sending knock notification
+    const client = new Client({
+      webSocketFactory: () => new SockJS("/ws"),
+      reconnectDelay: 3000,
+      onConnect: () => {
+        // Listen for kicks
+        client.subscribe(`/topic/room/${roomCode}/kicks`, (msg) => {
+          const data = JSON.parse(msg.body);
+          if (data.email === userEmail) {
+            clearInterval(pollInterval);
+            localStorage.removeItem(`meetx_role_${roomCode}`);
+            navigate("/");
+          }
+        });
+
+        // Send knock every 4s so host sees it
+        const sendKnock = () => {
+          if (client.active) {
+            client.publish({
+              destination: `/app/room/${roomCode}/knock`,
+              body: JSON.stringify({ email: userEmail, name: userName }),
+            });
+          }
+        };
+        sendKnock();
+        // const knockInterval = setInterval(sendKnock, 4000);
+
+        // Start polling for admission
+        startPolling();
+
+        // Cleanup on disconnect
+        // client.onDisconnect = () => clearInterval(knockInterval);
+      },
+    });
+
+    client.activate();
+    stompRef.current = client;
+  };
+
+  // ── Admitted guest STOMP — only listens for kicks ─────────────────────────
+  const setupGuestStompAdmitted = (roomCode) => {
+    const client = new Client({
+      webSocketFactory: () => new SockJS("/ws"),
+      reconnectDelay: 3000,
+      onConnect: () => {
+        client.subscribe(`/topic/room/${roomCode}/kicks`, (msg) => {
+          const data = JSON.parse(msg.body);
+          if (data.email === userEmail) {
+            localStorage.removeItem(`meetx_role_${roomCode}`);
+            alert("You have been removed from the meeting.");
+            navigate("/");
+          }
+        });
+      },
+    });
+    client.activate();
+    stompRef.current = client;
+  };
+
+  // ── Host: admit or deny ───────────────────────────────────────────────────
+  const handleAdmit = async (knockUser, admitted) => {
+    handledRef.current.add(knockUser.email); // Mark handled immediately
+    setWaiting((prev) => prev.filter((u) => u.email !== knockUser.email));
+    try {
+      await api.admitUser(code, knockUser.email, admitted, token);
+    } catch (e) {
+      console.error("Admit failed:", e);
+    }
+  };
+
+  // ── Host: kick participant ─────────────────────────────────────────────────
+  const handleKick = useCallback(
+    (email) => {
+      stompRef.current?.publish({
+        destination: `/app/room/${code}/kick`,
+        body: JSON.stringify({ email }),
+      });
+    },
+    [code],
+  );
+
+  // ── Disconnect ────────────────────────────────────────────────────────────
+  const handleDisconnected = useCallback(() => {
+    api.notifyLeave(code, token).catch(() => {});
+    stompRef.current?.deactivate();
+    // Host leaves: clear host role so others need re-admission next time
+    if (isHost) localStorage.removeItem(`meetx_role_${code}`);
+    navigate("/");
+  }, [code, token, navigate, isHost]);
 
   const handleConnected = useCallback(() => {
     api.notifyJoin(code, token).catch(() => {});
   }, [code, token]);
-  const handleDisconnected = useCallback(() => {
-    api.notifyLeave(code, token).catch(() => {});
-    navigate("/");
-  }, [code, token, navigate]);
 
+  // ── Timer string ──────────────────────────────────────────────────────────
   const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
   const ss2 = String(seconds % 60).padStart(2, "0");
   const hh = Math.floor(seconds / 3600);
@@ -85,40 +273,65 @@ export default function RoomPage() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // ── Screens ───────────────────────────────────────────────────────────────
   if (loading)
     return (
-      <Screen>
-        <span
-          className="spinner spinner-light"
-          style={{ width: 28, height: 28 }}
-        />
-        <p
-          style={{ color: "var(--text-2)", marginTop: 14, fontSize: "0.9rem" }}
-        >
-          Joining{" "}
-          <strong
-            style={{ color: "var(--text)", fontFamily: "var(--font-mono)" }}
-          >
-            {code}
-          </strong>
-          …
+      <FullScreen>
+        <div className={styles.loadSpinner} />
+        <p className={styles.loadText}>
+          Joining <span className={styles.loadCode}>{code}</span>
         </p>
-      </Screen>
+      </FullScreen>
     );
-  if (tokenError)
+
+  if (error)
     return (
-      <Screen>
-        <p
-          style={{ color: "var(--red)", marginBottom: 16, textAlign: "center" }}
-        >
-          {tokenError}
-        </p>
+      <FullScreen>
+        <p className={styles.errorText}>{error}</p>
         <button className="btn btn-ghost" onClick={() => navigate("/")}>
           ← Back
         </button>
-      </Screen>
+      </FullScreen>
     );
 
+  if (admissionState === "waiting")
+    return (
+      <FullScreen>
+        <div className={styles.waitCard}>
+          <div className={styles.waitRipple}>
+            <div className={styles.waitAvatar}>{userName[0].toUpperCase()}</div>
+          </div>
+          <h2 className={styles.waitTitle}>Waiting to be admitted</h2>
+          <p className={styles.waitSub}>The host will let you in shortly</p>
+          <div className={styles.waitCode}>{code}</div>
+          <button className={styles.waitLeave} onClick={() => navigate("/")}>
+            Leave
+          </button>
+        </div>
+      </FullScreen>
+    );
+
+  if (admissionState === "rejected")
+    return (
+      <FullScreen>
+        <div className={styles.rejectedCard}>
+          <div className={styles.rejectedIcon}>✕</div>
+          <h2 className={styles.waitTitle}>Entry declined</h2>
+          <p className={styles.waitSub}>
+            The host didn't admit you to this meeting.
+          </p>
+          <button
+            className="btn btn-ghost"
+            style={{ marginTop: 16 }}
+            onClick={() => navigate("/")}
+          >
+            ← Go back
+          </button>
+        </div>
+      </FullScreen>
+    );
+
+  // ── Main room ──────────────────────────────────────────────────────────────
   return (
     <div className={styles.page}>
       <LiveKitRoom
@@ -133,34 +346,27 @@ export default function RoomPage() {
         className={styles.lkRoom}
       >
         <RoomAudioRenderer />
-
-        {/* Full screen video */}
         <VideoGrid />
 
-        {/* Minimal top overlay */}
+        {/* Top bar */}
         <div className={styles.topBar}>
           <div className={styles.topLeft}>
-            <svg width="24" height="24" viewBox="0 0 32 32" fill="none">
-              <rect
-                width="32"
-                height="32"
-                rx="9"
-                fill="var(--accent)"
-                fillOpacity="0.15"
-              />
-              <path
-                d="M8 12a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2v-8Z"
-                stroke="var(--accent)"
-                strokeWidth="1.5"
-              />
-              <path
-                d="M20 14l4-2v8l-4-2"
-                stroke="var(--accent)"
-                strokeWidth="1.5"
+            <div className={styles.brandMark}>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
                 strokeLinejoin="round"
-              />
-            </svg>
-            <span className={styles.roomCodeBadge}>{code}</span>
+              >
+                <path d="M15 10l4.553-2.276A1 1 0 0 1 21 8.723v6.554a1 1 0 0 1-1.447.894L15 14" />
+                <rect x="3" y="8" width="12" height="8" rx="2" />
+              </svg>
+            </div>
+            <span className={styles.roomCode}>{code}</span>
           </div>
           <div className={styles.topRight}>
             <button className={styles.topBtn} onClick={toggleTheme}>
@@ -169,18 +375,49 @@ export default function RoomPage() {
           </div>
         </div>
 
-        {/* Glassmorphism floating controls */}
+        {/* Host: knock notifications */}
+        {isHost && waitingUsers.length > 0 && (
+          <div className={styles.knockStack}>
+            {waitingUsers.map((u) => (
+              <div key={u.email} className={styles.knockCard}>
+                <div className={styles.knockAvatar}>
+                  {(u.name || u.email)[0].toUpperCase()}
+                </div>
+                <div className={styles.knockInfo}>
+                  <p className={styles.knockName}>{u.name}</p>
+                  <p className={styles.knockSub}>wants to join</p>
+                </div>
+                <button
+                  className={styles.btnAdmit}
+                  onClick={() => handleAdmit(u, true)}
+                >
+                  Admit
+                </button>
+                <button
+                  className={styles.btnDeny}
+                  onClick={() => handleAdmit(u, false)}
+                >
+                  Deny
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Floating controls */}
         <div className={styles.ctrlFloat}>
           <FloatingControls
             timer={timer}
             onInvite={() => setShowInvite(true)}
             onLeave={handleDisconnected}
+            isHost={isHost}
+            onKick={handleKick}
           />
         </div>
 
-        {/* Chat bubble */}
+        {/* Chat FAB */}
         <button
-          className={`${styles.chatBubble} ${chatOpen ? styles.chatOpen : ""}`}
+          className={`${styles.chatFab} ${chatOpen ? styles.chatFabOpen : ""}`}
           onClick={() => {
             setChatOpen((v) => !v);
             if (!chatOpen) setUnread(0);
@@ -188,16 +425,18 @@ export default function RoomPage() {
         >
           <ChatIco />
           {unread > 0 && !chatOpen && (
-            <span className={styles.badge}>{unread > 9 ? "9+" : unread}</span>
+            <span className={styles.unreadBadge}>
+              {unread > 9 ? "9+" : unread}
+            </span>
           )}
         </button>
 
-        {/* Chat panel */}
+        {/* Chat drawer */}
         {chatOpen && (
           <div className={`${styles.chatDrawer} anim-slide-up`}>
             <ChatSection
               roomCode={code}
-              currentUser={user?.name || user?.email || "Anonymous"}
+              currentUser={userName}
               token={token}
               onNew={() => {
                 if (!chatOpen) setUnread((u) => u + 1);
@@ -216,17 +455,17 @@ export default function RoomPage() {
         >
           <div className={`${styles.inviteCard} anim-scale-in`}>
             <div className={styles.inviteHead}>
-              <span className={styles.inviteTitle}>Invite to call</span>
+              <h3 className={styles.inviteTitle}>Invite to meeting</h3>
               <button
                 className={styles.xBtn}
                 onClick={() => setShowInvite(false)}
               >
-                ×
+                <CloseIco />
               </button>
             </div>
-            <div className={styles.codeDisplay}>
-              <p className={styles.codeLabel}>ROOM CODE</p>
-              <p className={styles.codeVal}>{code}</p>
+            <div className={styles.codeBlock}>
+              <p className={styles.codeBlockLabel}>ROOM CODE</p>
+              <p className={styles.codeBlockVal}>{code}</p>
             </div>
             <div className={styles.linkBox}>
               <span className={styles.linkText}>
@@ -237,7 +476,7 @@ export default function RoomPage() {
               className={`btn btn-primary ${styles.fullBtn}`}
               onClick={copyLink}
             >
-              {copied ? "✓ Link copied!" : "Copy invite link"}
+              {copied ? "✓ Copied!" : "Copy invite link"}
             </button>
             <div className={styles.shareRow}>
               <a
@@ -262,24 +501,7 @@ export default function RoomPage() {
   );
 }
 
-function Screen({ children }) {
-  return (
-    <div
-      style={{
-        minHeight: "100dvh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "var(--bg)",
-        gap: 8,
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
+// ── Video grid ─────────────────────────────────────────────────────────────────
 function VideoGrid() {
   const tracks = useTracks(
     [
@@ -297,12 +519,14 @@ function VideoGrid() {
   );
 }
 
-function FloatingControls({ timer, onInvite, onLeave }) {
+// ── Floating controls ──────────────────────────────────────────────────────────
+function FloatingControls({ timer, onInvite, onLeave, isHost, onKick }) {
   const { localParticipant } = useLocalParticipant();
   const [mic, setMic] = useState(false);
   const [cam, setCam] = useState(false);
   const [screen, setScreen] = useState(false);
-  const [screenErr, setScreenErr] = useState(""); // ✅ error state
+  const [screenErr, setScreenErr] = useState("");
+  const [showParticipants, setShowParticipants] = useState(false);
 
   const toggleMic = async () => {
     if (!localParticipant) return;
@@ -311,7 +535,6 @@ function FloatingControls({ timer, onInvite, onLeave }) {
     setMic(n);
   };
 
-  // ✅ Fix: facingMode: 'user' — front camera on mobile
   const toggleCam = async () => {
     if (!localParticipant) return;
     const n = !cam;
@@ -319,7 +542,6 @@ function FloatingControls({ timer, onInvite, onLeave }) {
     setCam(n);
   };
 
-  // ✅ Fix: try karo, fail hone pe proper error dikhao
   const toggleScreen = async () => {
     if (!localParticipant) return;
     setScreenErr("");
@@ -328,40 +550,25 @@ function FloatingControls({ timer, onInvite, onLeave }) {
       await localParticipant.setScreenShareEnabled(n);
       setScreen(n);
     } catch (err) {
-      if (err.name === "NotSupportedError" || err.name === "NotAllowedError") {
-        setScreenErr("Screen sharing not supported on this browser/device.");
-      } else if (err.name === "AbortError") {
-        // User cancelled — no error needed
-      } else {
-        setScreenErr("Could not start screen share.");
+      if (err.name === "NotAllowedError" || err.name === "NotSupportedError") {
+        setScreenErr("Screen sharing not supported on this browser.");
+      } else if (err.name !== "AbortError") {
+        setScreenErr("Could not share screen.");
       }
-      setTimeout(() => setScreenErr(""), 4000); // auto clear
+      setTimeout(() => setScreenErr(""), 4000);
     }
   };
 
   return (
     <>
-      {/* ✅ Screen share error toast */}
-      {screenErr && (
-        <div
-          style={{
-            position: "fixed",
-            bottom: 100,
-            left: "50%",
-            transform: "translateX(-50%)",
-            background: "rgba(255,77,106,0.15)",
-            border: "1px solid rgba(255,77,106,0.3)",
-            color: "#ff4d6a",
-            borderRadius: 10,
-            padding: "10px 18px",
-            fontSize: "0.82rem",
-            zIndex: 50,
-            whiteSpace: "nowrap",
-            backdropFilter: "blur(10px)",
-          }}
-        >
-          {screenErr}
-        </div>
+      {screenErr && <div className={styles.screenErrToast}>{screenErr}</div>}
+
+      {/* Participants panel (host only) */}
+      {isHost && showParticipants && (
+        <ParticipantsPanel
+          onKick={onKick}
+          onClose={() => setShowParticipants(false)}
+        />
       )}
 
       <div className={styles.pill}>
@@ -370,6 +577,7 @@ function FloatingControls({ timer, onInvite, onLeave }) {
           <span className={styles.timerVal}>{timer}</span>
         </div>
         <div className={styles.sep} />
+
         <CtrlB
           on={mic}
           danger={!mic}
@@ -394,11 +602,27 @@ function FloatingControls({ timer, onInvite, onLeave }) {
         >
           <ScreenIco />
         </CtrlB>
-        <CtrlB onClick={onInvite} tip="Invite">
+        <CtrlB onClick={onInvite} tip="Invite people">
           <InvIco />
         </CtrlB>
+
+        {/* Host: participants / kick panel toggle */}
+        {isHost && (
+          <CtrlB
+            on={showParticipants}
+            onClick={() => setShowParticipants((v) => !v)}
+            tip="Participants"
+          >
+            <PeopleIco />
+          </CtrlB>
+        )}
+
         <div className={styles.sep} />
-        <button className={styles.leaveBtn} onClick={onLeave}>
+        <button
+          className={styles.leaveBtn}
+          onClick={onLeave}
+          title="Leave meeting"
+        >
           <PhoneIco />
         </button>
       </div>
@@ -406,13 +630,60 @@ function FloatingControls({ timer, onInvite, onLeave }) {
   );
 }
 
+// ── Participants panel with kick ───────────────────────────────────────────────
+function ParticipantsPanel({ onKick, onClose }) {
+  const { remoteParticipants } = useLocalParticipant();
+
+  // Fallback: get participants from useTracks
+  const tracks = useTracks(
+    [{ source: Track.Source.Camera, withPlaceholder: true }],
+    { onlySubscribed: false },
+  );
+
+  const participants = [
+    ...new Map(
+      tracks.map((t) => [t.participant.identity, t.participant]),
+    ).values(),
+  ];
+
+  return (
+    <div className={styles.participantsPanel}>
+      <div className={styles.ppHeader}>
+        <span className={styles.ppTitle}>
+          Participants ({participants.length})
+        </span>
+        <button className={styles.ppClose} onClick={onClose}>
+          <CloseIco />
+        </button>
+      </div>
+      <div className={styles.ppList}>
+        {participants.length === 0 && (
+          <p className={styles.ppEmpty}>No other participants</p>
+        )}
+        {participants.map((p) => (
+          <div key={p.identity} className={styles.ppRow}>
+            <div className={styles.ppAvatar}>
+              {(p.identity || "?")[0].toUpperCase()}
+            </div>
+            <span className={styles.ppName}>{p.identity}</span>
+            <button
+              className={styles.ppKick}
+              onClick={() => onKick(p.identity)}
+              title="Remove from meeting"
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function CtrlB({ children, on, danger, accent, onClick, tip }) {
   return (
     <button
-      className={`${styles.ctrlBtn}
-      ${on && !danger ? styles.ctrlOn : ""}
-      ${danger ? styles.ctrlDanger : ""}
-      ${accent ? styles.ctrlAccent : ""}`}
+      className={`${styles.ctrlBtn} ${on && !danger ? styles.ctrlOn : ""} ${danger ? styles.ctrlDanger : ""} ${accent ? styles.ctrlAccent : ""}`}
       onClick={onClick}
       title={tip}
     >
@@ -421,9 +692,9 @@ function CtrlB({ children, on, danger, accent, onClick, tip }) {
   );
 }
 
+// ── Chat ──────────────────────────────────────────────────────────────────────
 function ChatSection({ roomCode, currentUser, token, onNew, onClose }) {
-  const [history, setHistory] = useState(null); // null = still loading
-
+  const [history, setHistory] = useState(null);
   useEffect(() => {
     api
       .getChatHistory(roomCode, token)
@@ -431,7 +702,7 @@ function ChatSection({ roomCode, currentUser, token, onNew, onClose }) {
       .catch(() => setHistory([]));
   }, [roomCode, token]);
 
-  if (history === null) {
+  if (history === null)
     return (
       <div
         style={{
@@ -439,15 +710,13 @@ function ChatSection({ roomCode, currentUser, token, onNew, onClose }) {
           alignItems: "center",
           justifyContent: "center",
           flex: 1,
-          color: "var(--text-3)",
+          color: "rgba(255,255,255,0.3)",
           fontSize: "0.85rem",
         }}
       >
-        Loading chat...
+        Loading…
       </div>
     );
-  }
-
   return (
     <ChatSectionReady
       roomCode={roomCode}
@@ -481,32 +750,35 @@ function ChatSectionReady({ roomCode, currentUser, history, onNew, onClose }) {
   );
 }
 
-const ico = (d, w = 18) => (
-  <svg
-    width={w}
-    height={w}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.8"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d={d} />
-  </svg>
-);
+function FullScreen({ children }) {
+  return (
+    <div
+      style={{
+        minHeight: "100dvh",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "#060810",
+        gap: 12,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ── Icons ──────────────────────────────────────────────────────────────────────
+const sv = {
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: "1.8",
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+};
 function MicIco() {
   return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg width="18" height="18" viewBox="0 0 24 24" {...sv}>
       <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
       <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
       <line x1="12" y1="19" x2="12" y2="23" />
@@ -516,16 +788,7 @@ function MicIco() {
 }
 function MicOffIco() {
   return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg width="18" height="18" viewBox="0 0 24 24" {...sv}>
       <line x1="1" y1="1" x2="23" y2="23" />
       <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
       <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
@@ -536,16 +799,7 @@ function MicOffIco() {
 }
 function CamIco() {
   return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg width="18" height="18" viewBox="0 0 24 24" {...sv}>
       <path d="M15 10l4.553-2.276A1 1 0 0 1 21 8.723v6.554a1 1 0 0 1-1.447.894L15 14" />
       <rect x="3" y="8" width="12" height="8" rx="2" />
     </svg>
@@ -553,16 +807,7 @@ function CamIco() {
 }
 function CamOffIco() {
   return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg width="18" height="18" viewBox="0 0 24 24" {...sv}>
       <line x1="1" y1="1" x2="23" y2="23" />
       <path d="M21 21H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3m3-3h6l2 3h4a2 2 0 0 1 2 2v9.34" />
       <path d="M15 13a3 3 0 1 1-4.24-2.76" />
@@ -571,16 +816,7 @@ function CamOffIco() {
 }
 function ScreenIco() {
   return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg width="18" height="18" viewBox="0 0 24 24" {...sv}>
       <rect x="2" y="3" width="20" height="14" rx="2" />
       <line x1="8" y1="21" x2="16" y2="21" />
       <line x1="12" y1="17" x2="12" y2="21" />
@@ -589,16 +825,7 @@ function ScreenIco() {
 }
 function InvIco() {
   return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg width="18" height="18" viewBox="0 0 24 24" {...sv}>
       <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
       <circle cx="9" cy="7" r="4" />
       <line x1="19" y1="8" x2="19" y2="14" />
@@ -606,18 +833,19 @@ function InvIco() {
     </svg>
   );
 }
+function PeopleIco() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" {...sv}>
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  );
+}
 function PhoneIco() {
   return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg width="18" height="18" viewBox="0 0 24 24" {...sv}>
       <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.42 19.42 0 0 1 3.07 8.63 19.79 19.79 0 0 1 0 0a2 2 0 0 1 2-2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11z" />
       <line x1="23" y1="1" x2="1" y2="23" />
     </svg>
@@ -625,31 +853,22 @@ function PhoneIco() {
 }
 function ChatIco() {
   return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg width="20" height="20" viewBox="0 0 24 24" {...sv}>
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+function CloseIco() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" {...sv}>
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
     </svg>
   );
 }
 function SunIco() {
   return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-    >
+    <svg width="15" height="15" viewBox="0 0 24 24" {...sv}>
       <circle cx="12" cy="12" r="5" />
       <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
     </svg>
@@ -657,15 +876,7 @@ function SunIco() {
 }
 function MoonIco() {
   return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-    >
+    <svg width="15" height="15" viewBox="0 0 24 24" {...sv}>
       <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
     </svg>
   );
@@ -679,16 +890,7 @@ function WAIco() {
 }
 function MailIco() {
   return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
+    <svg width="13" height="13" viewBox="0 0 24 24" {...sv}>
       <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
       <polyline points="22,6 12,13 2,6" />
     </svg>

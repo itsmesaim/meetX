@@ -19,14 +19,23 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * Handles both WebSocket STOMP messages and the REST history endpoint.
  *
- * <p>─── WebSocket flow ──────────────────────────────────────────────────────────── 1. Client
- * connects to ws://localhost:8080/ws (STOMP over WebSocket or SockJS) 2. Client subscribes to
- * /topic/chat/{roomCode} 3. Client sends a message to /app/chat/{roomCode} Payload (JSON): {
- * "sender": "Alice", "content": "Hello!" } 4. Server persists to MongoDB, then broadcasts to
- * /topic/chat/{roomCode} so every subscriber in that room receives the saved ChatMessage.
+ * <p>
+ * ─── WebSocket flow
+ * ──────────────────────────────────────────────────────────── 1. Client
+ * connects to ws://localhost:8080/ws (STOMP over WebSocket or SockJS) 2. Client
+ * subscribes to
+ * /topic/chat/{roomCode} 3. Client sends a message to /app/chat/{roomCode}
+ * Payload (JSON): {
+ * "sender": "Alice", "content": "Hello!" } 4. Server persists to MongoDB, then
+ * broadcasts to
+ * /topic/chat/{roomCode} so every subscriber in that room receives the saved
+ * ChatMessage.
  *
- * <p>─── REST endpoint ───────────────────────────────────────────────────────────── GET
- * /api/chat/{roomCode}/history [JWT required] Returns all messages for the given room in ascending
+ * <p>
+ * ─── REST endpoint
+ * ───────────────────────────────────────────────────────────── GET
+ * /api/chat/{roomCode}/history [JWT required] Returns all messages for the
+ * given room in ascending
  * timestamp order.
  */
 @Slf4j
@@ -46,30 +55,32 @@ public class ChatController {
   // ── WebSocket STOMP handler ───────────────────────────────────────────────
 
   /**
-   * Receives a chat message sent to /app/chat/{roomCode}, stamps it, persists it, and broadcasts to
+   * Receives a chat message sent to /app/chat/{roomCode}, stamps it, persists it,
+   * and broadcasts to
    * /topic/chat/{roomCode}.
    *
-   * @param roomCode extracted from the STOMP destination path
-   * @param incomingMessage partial ChatMessage with sender + content populated by client
+   * @param roomCode        extracted from the STOMP destination path
+   * @param incomingMessage partial ChatMessage with sender + content populated by
+   *                        client
    */
   @MessageMapping("/chat/{roomCode}")
   public void handleChatMessage(
       @DestinationVariable String roomCode, @Payload ChatMessage incomingMessage) {
 
-    ChatMessage saved =
-        ChatMessage.builder()
-            .roomCode(roomCode)
-            .sender(incomingMessage.getSender())
-            .content(incomingMessage.getContent())
-            .timestamp(LocalDateTime.now())
-            .build();
+    ChatMessage saved = ChatMessage.builder()
+        .roomCode(roomCode)
+        .sender(incomingMessage.getSender())
+        .content(incomingMessage.getContent())
+        .timestamp(LocalDateTime.now())
+        .build();
 
     chatMessageRepository.save(saved);
 
     log.debug(
         "[WS] room={} sender='{}' content='{}'", roomCode, saved.getSender(), saved.getContent());
 
-    // Broadcast the fully-saved message (includes id + timestamp) to all subscribers
+    // Broadcast the fully-saved message (includes id + timestamp) to all
+    // subscribers
     messagingTemplate.convertAndSend("/topic/chat/" + roomCode, saved);
   }
 
@@ -78,10 +89,14 @@ public class ChatController {
   /**
    * GET /api/chat/{roomCode}/history [JWT required]
    *
-   * <p>Returns all chat messages for the room ordered by timestamp ascending. Useful on initial
+   * <p>
+   * Returns all chat messages for the room ordered by timestamp ascending. Useful
+   * on initial
    * page load to hydrate the chat panel.
    *
-   * <p>Response (200 OK): { "success": true, "message": "Chat history", "data": [ { "id": "...",
+   * <p>
+   * Response (200 OK): { "success": true, "message": "Chat history", "data": [ {
+   * "id": "...",
    * "roomCode": "A3F9-BC12", "sender": "Alice", "content": "Hello!", "timestamp":
    * "2024-03-01T10:15:30" }, ... ] }
    */
@@ -93,8 +108,7 @@ public class ChatController {
     public com.meetx.dto.ApiResponse<List<ChatMessage>> getChatHistory(
         @PathVariable String roomCode) {
 
-      List<ChatMessage> messages =
-          chatMessageRepository.findByRoomCodeOrderByTimestampAsc(roomCode);
+      List<ChatMessage> messages = chatMessageRepository.findByRoomCodeOrderByTimestampAsc(roomCode);
 
       return com.meetx.dto.ApiResponse.success("Chat history", messages);
     }

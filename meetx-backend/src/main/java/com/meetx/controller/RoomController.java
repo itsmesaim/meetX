@@ -8,6 +8,9 @@ import com.meetx.model.Room;
 import com.meetx.service.LiveKitService;
 import com.meetx.service.RoomService;
 import lombok.RequiredArgsConstructor;
+
+import java.util.Map;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -50,18 +53,19 @@ public class RoomController {
 
     roomService.joinRoom(code);
 
-    String identity =
-        (participantName != null && !participantName.isBlank())
-            ? participantName
-            : userDetails.getUsername();
+    String identity = (participantName != null && !participantName.isBlank())
+        ? participantName
+        : userDetails.getUsername();
 
     LiveKitTokenResponse tokenResponse = liveKitService.generateToken(code, identity);
     return ResponseEntity.ok(ApiResponse.success("Token generated", tokenResponse));
   }
 
   /**
-   * POST /api/rooms/{code}/session/join Called by the frontend when a participant successfully
-   * connects to LiveKit. Increments the participant counter and clears the empty-room timer.
+   * POST /api/rooms/{code}/session/join Called by the frontend when a participant
+   * successfully
+   * connects to LiveKit. Increments the participant counter and clears the
+   * empty-room timer.
    */
   @PostMapping("/{code}/session/join")
   public ResponseEntity<ApiResponse<Void>> participantJoined(@PathVariable String code) {
@@ -70,8 +74,10 @@ public class RoomController {
   }
 
   /**
-   * POST /api/rooms/{code}/session/leave Called by the frontend when a participant disconnects from
-   * LiveKit. Decrements the counter. If it hits 0, starts the 30-min auto-close countdown.
+   * POST /api/rooms/{code}/session/leave Called by the frontend when a
+   * participant disconnects from
+   * LiveKit. Decrements the counter. If it hits 0, starts the 30-min auto-close
+   * countdown.
    */
   @PostMapping("/{code}/session/leave")
   public ResponseEntity<ApiResponse<Void>> participantLeft(@PathVariable String code) {
@@ -87,4 +93,31 @@ public class RoomController {
     roomService.closeRoom(code, userDetails.getUsername());
     return ResponseEntity.ok(ApiResponse.success("Room closed", null));
   }
+
+  /** POST /api/rooms/{code}/admit — host admits or denies a user */
+  @PostMapping("/{code}/admit")
+  public ResponseEntity<ApiResponse<Void>> admitUser(
+      @PathVariable String code,
+      @RequestBody Map<String, Object> body) {
+    String email = (String) body.get("email");
+    boolean admitted = Boolean.TRUE.equals(body.get("admitted"));
+    if (admitted) {
+      roomService.admitUser(code, email);
+    } else {
+      roomService.denyUser(code, email);
+    }
+    return ResponseEntity.ok(ApiResponse.success("Done", null));
+  }
+
+  /** GET /api/rooms/{code}/admission-status — guest polls this */
+  @GetMapping("/{code}/admission-status")
+  public ResponseEntity<ApiResponse<Map<String, Boolean>>> admissionStatus(
+      @PathVariable String code,
+      @RequestParam String email) {
+    boolean admitted = roomService.isAdmitted(code, email);
+    boolean denied = roomService.isDenied(code, email);
+    return ResponseEntity.ok(ApiResponse.success("Status",
+        Map.of("admitted", admitted, "denied", denied)));
+  }
+
 }

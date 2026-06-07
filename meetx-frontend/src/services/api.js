@@ -111,4 +111,20 @@ export const api = {
 
   startMeetingNow: (id, token) =>
     request(`/meetings/${id}/start`, { method: "POST" }, token),
+
+  // Admit or deny a user (host calls this)
+  admitUser: (code, email, admitted, token) =>
+    request(
+      `/rooms/${code}/admit`,
+      { method: "POST", body: JSON.stringify({ email, admitted }) },
+      token,
+    ),
+
+  // Check if admitted (guest polls this)
+  checkAdmission: (code, email, token) =>
+    request(
+      `/rooms/${code}/admission-status?email=${encodeURIComponent(email)}`,
+      { method: "GET" },
+      token,
+    ),
 };

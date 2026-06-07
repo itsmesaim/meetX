@@ -16,6 +16,7 @@ function getRecentRooms() {
     return [];
   }
 }
+
 function saveRecentRoom(code) {
   const prev = getRecentRooms().filter((c) => c !== code);
   localStorage.setItem(
@@ -61,6 +62,7 @@ export default function DashboardPage() {
     setCreating(true);
     try {
       const r = await api.createRoom(token);
+      sessionStorage.setItem("meetx_host_room", r.roomCode);
       saveRecentRoom(r.roomCode);
       navigate(`/room/${r.roomCode}`);
     } catch (e) {
@@ -109,6 +111,7 @@ export default function DashboardPage() {
   const handleStartNow = async (id, roomCode) => {
     try {
       await api.startMeetingNow(id, token);
+      sessionStorage.setItem("meetx_host_room", roomCode);
       navigate(`/room/${roomCode}`);
     } catch (e) {
       setError(e.message);
@@ -117,11 +120,11 @@ export default function DashboardPage() {
 
   const firstName =
     user?.name?.split(" ")[0] || user?.email?.split("@")[0] || "there";
+
   const now = new Date();
   const hour = now.getHours();
   const greeting =
     hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-
   const upcomingCount = meetings.filter((m) => m.status === "UPCOMING").length;
   const liveCount = meetings.filter((m) => m.status === "ACTIVE").length;
 
@@ -133,7 +136,7 @@ export default function DashboardPage() {
         <div className={styles.grid} />
       </div>
 
-      {/* ── Navbar ── */}
+      {/* Navbar */}
       <nav className={styles.nav}>
         <div className={styles.navLogo}>
           <div className={styles.navLogoMark}>
@@ -168,7 +171,7 @@ export default function DashboardPage() {
       </nav>
 
       <main className={styles.main}>
-        {/* ── Greeting row ── */}
+        {/* Greeting */}
         <div className={`${styles.greetRow} anim-fade-up`}>
           <div>
             <p className={styles.greetSub}>{greeting},</p>
@@ -188,7 +191,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* ── Bento grid ── */}
+        {/* Bento grid */}
         <div className={`${styles.bento} anim-fade-up anim-delay-1`}>
           {/* Start card */}
           <div className={`${styles.bentoCard} ${styles.startCard}`}>
@@ -203,7 +206,7 @@ export default function DashboardPage() {
             </p>
             <div className={styles.startActions}>
               <button
-                className={`${styles.btnPrimary}`}
+                className={styles.btnPrimary}
                 onClick={handleCreate}
                 disabled={creating}
               >
@@ -299,7 +302,10 @@ export default function DashboardPage() {
               </button>
               <button
                 className={styles.quickLink}
-                onClick={() => logout() || navigate("/login")}
+                onClick={() => {
+                  logout();
+                  navigate("/login");
+                }}
               >
                 <LogoutIco /> Sign out
               </button>
@@ -314,7 +320,6 @@ export default function DashboardPage() {
               </span>
               <span className={styles.meetCount}>{meetings.length}</span>
             </div>
-
             {loadingMeetings ? (
               <div className={styles.meetLoading}>
                 <span className="spinner spinner-light" />
@@ -377,7 +382,7 @@ export default function DashboardPage() {
   );
 }
 
-/* ── Meet row ──────────────────────────────────────────────────────── */
+// MeetRow
 function MeetRow({
   meeting,
   userEmail,
@@ -392,7 +397,6 @@ function MeetRow({
   const now = new Date();
   const isLive =
     Math.abs(now - start) < 15 * 60 * 1000 || meeting.status === "ACTIVE";
-
   const timeStr = start.toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
@@ -466,7 +470,7 @@ function MeetRow({
   );
 }
 
-// Info modal 
+// InfoModal
 function InfoModal({ meeting, onClose }) {
   const start = new Date(meeting.scheduledAt);
   const [copied, setCopied] = useState(false);
@@ -564,7 +568,7 @@ function InfoRow({ icon, label, children }) {
   );
 }
 
-// Icons 
+/* ── Icons ───────────────────────────────────────────────────────────── */
 const s = {
   fill: "none",
   stroke: "currentColor",
@@ -572,17 +576,20 @@ const s = {
   strokeLinecap: "round",
   strokeLinejoin: "round",
 };
+
 const VideoIco = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" {...s}>
     <path d="M15 10l4.553-2.276A1 1 0 0 1 21 8.723v6.554a1 1 0 0 1-1.447.894L15 14" />
     <rect x="3" y="8" width="12" height="8" rx="2" />
   </svg>
 );
+
 const PlayIco = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" {...s}>
     <polygon points="5,3 19,12 5,21" />
   </svg>
 );
+
 const CalIco = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" {...s}>
     <rect x="3" y="4" width="18" height="18" rx="2" />
@@ -591,18 +598,21 @@ const CalIco = () => (
     <line x1="3" y1="10" x2="21" y2="10" />
   </svg>
 );
+
 const LinkIco = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" {...s}>
     <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
     <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
   </svg>
 );
+
 const ArrowIco = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" {...s}>
     <line x1="5" y1="12" x2="19" y2="12" />
     <polyline points="12,5 19,12 12,19" />
   </svg>
 );
+
 const ChartIco = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" {...s}>
     <line x1="18" y1="20" x2="18" y2="10" />
@@ -610,12 +620,14 @@ const ChartIco = () => (
     <line x1="6" y1="20" x2="6" y2="14" />
   </svg>
 );
+
 const ClockIco = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" {...s}>
     <circle cx="12" cy="12" r="10" />
     <polyline points="12,6 12,12 16,14" />
   </svg>
 );
+
 const InfoIco = () => (
   <svg width="13" height="13" viewBox="0 0 24 24" {...s}>
     <circle cx="12" cy="12" r="10" />
@@ -623,23 +635,27 @@ const InfoIco = () => (
     <line x1="12" y1="8" x2="12.01" y2="8" />
   </svg>
 );
+
 const CloseIco = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" {...s}>
     <line x1="18" y1="6" x2="6" y2="18" />
     <line x1="6" y1="6" x2="18" y2="18" />
   </svg>
 );
+
 const SunIco = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" {...s}>
     <circle cx="12" cy="12" r="5" />
     <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
   </svg>
 );
+
 const MoonIco = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" {...s}>
     <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
   </svg>
 );
+
 const LogoutIco = () => (
   <svg width="13" height="13" viewBox="0 0 24 24" {...s}>
     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
@@ -647,6 +663,7 @@ const LogoutIco = () => (
     <line x1="21" y1="12" x2="9" y2="12" />
   </svg>
 );
+
 const WarnIco = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" {...s}>
     <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
@@ -654,23 +671,27 @@ const WarnIco = () => (
     <line x1="12" y1="17" x2="12.01" y2="17" />
   </svg>
 );
+
 const KeyIco = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" {...s}>
     <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
   </svg>
 );
+
 const UserIco = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" {...s}>
     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
     <circle cx="12" cy="7" r="4" />
   </svg>
 );
+
 const NoteIco = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" {...s}>
     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
     <polyline points="14,2 14,8 20,8" />
   </svg>
 );
+
 const MailIco = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" {...s}>
     <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />

@@ -21,9 +21,13 @@ public class AuthController {
   /**
    * POST /api/auth/register
    *
-   * <p>Request body: { "name": "Saim", "email": "saim@meetx.io", "password": "supersecret" }
+   * <p>
+   * Request body: { "name": "Saim", "email": "saim@meetx.io", "password":
+   * "supersecret" }
    *
-   * <p>Response (201 Created): { "success": true, "message": "Registration successful", "data": {
+   * <p>
+   * Response (201 Created): { "success": true, "message": "Registration
+   * successful", "data": {
    * "token": "<JWT>", "email": "saim@meetx.io", "name": "Saim" } }
    */
   @PostMapping("/register")
@@ -37,9 +41,12 @@ public class AuthController {
   /**
    * POST /api/auth/login
    *
-   * <p>Request body: { "email": "saim@meetx.io", "password": "supersecret" }
+   * <p>
+   * Request body: { "email": "saim@meetx.io", "password": "supersecret" }
    *
-   * <p>Response (200 OK): { "success": true, "message": "Login successful", "data": { "token":
+   * <p>
+   * Response (200 OK): { "success": true, "message": "Login successful", "data":
+   * { "token":
    * "<JWT>", "email": "saim@meetx.io", "name": "Saim" } }
    */
   @PostMapping("/login")
