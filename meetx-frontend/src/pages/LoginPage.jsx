@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../services/api.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import styles from "./AuthPage.module.css";
@@ -7,6 +7,11 @@ import styles from "./AuthPage.module.css";
 export default function LoginPage() {
   const navigate = useNavigate();
   const { login } = useAuth();
+
+  // Read roomCode from invite link e.g. /login?roomCode=MXT-A3F9
+  const [searchParams] = useSearchParams();
+  const roomCode = searchParams.get("roomCode");
+
   const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -21,7 +26,7 @@ export default function LoginPage() {
     try {
       const data = await api.login(form.email, form.password);
       login(data.token, { email: data.email, name: data.name });
-      navigate("/");
+      navigate(roomCode ? `/room/${roomCode}` : "/");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -31,19 +36,28 @@ export default function LoginPage() {
 
   return (
     <div className={styles.page}>
-      {/* Background aurora blobs */}
       <div className={styles.blob1} />
       <div className={styles.blob2} />
 
       <div className={`${styles.card} anim-fade-up`}>
-        {/* Logo */}
         <div className={styles.logo}>
           <LogoIcon />
           <span>MeetX</span>
         </div>
 
+        {roomCode && (
+          <div className={styles.inviteBanner}>
+            📹 You've been invited to a meeting. Sign in to join room{" "}
+            <strong>{roomCode}</strong>.
+          </div>
+        )}
+
         <h1 className={styles.heading}>Welcome back</h1>
-        <p className={styles.sub}>Sign in to your account to continue</p>
+        <p className={styles.sub}>
+          {roomCode
+            ? "Sign in to join your meeting instantly"
+            : "Sign in to your account to continue"}
+        </p>
 
         {error && <div className={styles.error}>{error}</div>}
 
@@ -80,13 +94,22 @@ export default function LoginPage() {
             className={`btn btn-primary ${styles.submitBtn}`}
             disabled={loading}
           >
-            {loading ? <span className="spinner" /> : "Sign in"}
+            {loading ? (
+              <span className="spinner" />
+            ) : roomCode ? (
+              "Sign in & join meeting"
+            ) : (
+              "Sign in"
+            )}
           </button>
         </form>
 
         <p className={styles.switch}>
           Don't have an account?{" "}
-          <Link to="/register" className={styles.switchLink}>
+          <Link
+            to={roomCode ? `/register?roomCode=${roomCode}` : "/register"}
+            className={styles.switchLink}
+          >
             Create one
           </Link>
         </p>

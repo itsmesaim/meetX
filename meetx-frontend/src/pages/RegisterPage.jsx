@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../services/api.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import styles from "./AuthPage.module.css";
@@ -7,6 +7,10 @@ import styles from "./AuthPage.module.css";
 export default function RegisterPage() {
   const navigate = useNavigate();
   const { login } = useAuth();
+
+  const [searchParams] = useSearchParams();
+  const roomCode = searchParams.get("roomCode");
+
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -34,7 +38,8 @@ export default function RegisterPage() {
     try {
       const data = await api.register(form.name, form.email, form.password);
       login(data.token, { email: data.email, name: data.name });
-      navigate("/");
+
+      navigate(roomCode ? `/room/${roomCode}` : "/");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -53,8 +58,19 @@ export default function RegisterPage() {
           <span>MeetX</span>
         </div>
 
+        {roomCode && (
+          <div className={styles.inviteBanner}>
+            📹 You've been invited to join a meeting. Create your account to
+            join instantly.
+          </div>
+        )}
+
         <h1 className={styles.heading}>Create account</h1>
-        <p className={styles.sub}>Join MeetX — it's free forever</p>
+        <p className={styles.sub}>
+          {roomCode
+            ? `Join MeetX to enter room ${roomCode}`
+            : "Join MeetX — it's free forever"}
+        </p>
 
         {error && <div className={styles.error}>{error}</div>}
 
@@ -117,13 +133,22 @@ export default function RegisterPage() {
             className={`btn btn-primary ${styles.submitBtn}`}
             disabled={loading}
           >
-            {loading ? <span className="spinner" /> : "Create account"}
+            {loading ? (
+              <span className="spinner" />
+            ) : roomCode ? (
+              "Create account & join meeting"
+            ) : (
+              "Create account"
+            )}
           </button>
         </form>
 
         <p className={styles.switch}>
           Already have an account?{" "}
-          <Link to="/login" className={styles.switchLink}>
+          <Link
+            to={roomCode ? `/login?roomCode=${roomCode}` : "/login"}
+            className={styles.switchLink}
+          >
             Sign in
           </Link>
         </p>

@@ -302,6 +302,7 @@ function FloatingControls({ timer, onInvite, onLeave }) {
   const [mic, setMic] = useState(false);
   const [cam, setCam] = useState(false);
   const [screen, setScreen] = useState(false);
+  const [screenErr, setScreenErr] = useState(""); // ✅ error state
 
   const toggleMic = async () => {
     if (!localParticipant) return;
@@ -309,60 +310,99 @@ function FloatingControls({ timer, onInvite, onLeave }) {
     await localParticipant.setMicrophoneEnabled(n);
     setMic(n);
   };
+
+  // ✅ Fix: facingMode: 'user' — front camera on mobile
   const toggleCam = async () => {
     if (!localParticipant) return;
     const n = !cam;
-    await localParticipant.setCameraEnabled(n);
+    await localParticipant.setCameraEnabled(n, { facingMode: "user" });
     setCam(n);
   };
+
+  // ✅ Fix: try karo, fail hone pe proper error dikhao
   const toggleScreen = async () => {
     if (!localParticipant) return;
+    setScreenErr("");
     try {
       const n = !screen;
       await localParticipant.setScreenShareEnabled(n);
       setScreen(n);
-    } catch {}
+    } catch (err) {
+      if (err.name === "NotSupportedError" || err.name === "NotAllowedError") {
+        setScreenErr("Screen sharing not supported on this browser/device.");
+      } else if (err.name === "AbortError") {
+        // User cancelled — no error needed
+      } else {
+        setScreenErr("Could not start screen share.");
+      }
+      setTimeout(() => setScreenErr(""), 4000); // auto clear
+    }
   };
 
   return (
-    <div className={styles.pill}>
-      <div className={styles.timerChip}>
-        <span className={styles.timerDot} />
-        <span className={styles.timerVal}>{timer}</span>
+    <>
+      {/* ✅ Screen share error toast */}
+      {screenErr && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 100,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "rgba(255,77,106,0.15)",
+            border: "1px solid rgba(255,77,106,0.3)",
+            color: "#ff4d6a",
+            borderRadius: 10,
+            padding: "10px 18px",
+            fontSize: "0.82rem",
+            zIndex: 50,
+            whiteSpace: "nowrap",
+            backdropFilter: "blur(10px)",
+          }}
+        >
+          {screenErr}
+        </div>
+      )}
+
+      <div className={styles.pill}>
+        <div className={styles.timerChip}>
+          <span className={styles.timerDot} />
+          <span className={styles.timerVal}>{timer}</span>
+        </div>
+        <div className={styles.sep} />
+        <CtrlB
+          on={mic}
+          danger={!mic}
+          onClick={toggleMic}
+          tip={mic ? "Mute" : "Unmute"}
+        >
+          {mic ? <MicIco /> : <MicOffIco />}
+        </CtrlB>
+        <CtrlB
+          on={cam}
+          danger={!cam}
+          onClick={toggleCam}
+          tip={cam ? "Camera off" : "Camera on"}
+        >
+          {cam ? <CamIco /> : <CamOffIco />}
+        </CtrlB>
+        <CtrlB
+          on={screen}
+          accent={screen}
+          onClick={toggleScreen}
+          tip={screen ? "Stop sharing" : "Share screen"}
+        >
+          <ScreenIco />
+        </CtrlB>
+        <CtrlB onClick={onInvite} tip="Invite">
+          <InvIco />
+        </CtrlB>
+        <div className={styles.sep} />
+        <button className={styles.leaveBtn} onClick={onLeave}>
+          <PhoneIco />
+        </button>
       </div>
-      <div className={styles.sep} />
-      <CtrlB
-        on={mic}
-        danger={!mic}
-        onClick={toggleMic}
-        tip={mic ? "Mute" : "Unmute"}
-      >
-        {mic ? <MicIco /> : <MicOffIco />}
-      </CtrlB>
-      <CtrlB
-        on={cam}
-        danger={!cam}
-        onClick={toggleCam}
-        tip={cam ? "Camera off" : "Camera on"}
-      >
-        {cam ? <CamIco /> : <CamOffIco />}
-      </CtrlB>
-      <CtrlB
-        on={screen}
-        accent={screen}
-        onClick={toggleScreen}
-        tip={screen ? "Stop sharing" : "Share screen"}
-      >
-        <ScreenIco />
-      </CtrlB>
-      <CtrlB onClick={onInvite} tip="Invite">
-        <InvIco />
-      </CtrlB>
-      <div className={styles.sep} />
-      <button className={styles.leaveBtn} onClick={onLeave}>
-        <PhoneIco />
-      </button>
-    </div>
+    </>
   );
 }
 
@@ -382,13 +422,44 @@ function CtrlB({ children, on, danger, accent, onClick, tip }) {
 }
 
 function ChatSection({ roomCode, currentUser, token, onNew, onClose }) {
-  const [history, setHistory] = useState([]);
+  const [history, setHistory] = useState(null); // null = still loading
+
   useEffect(() => {
     api
       .getChatHistory(roomCode, token)
-      .then(setHistory)
-      .catch(() => {});
+      .then((data) => setHistory(data || []))
+      .catch(() => setHistory([]));
   }, [roomCode, token]);
+
+  if (history === null) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          flex: 1,
+          color: "var(--text-3)",
+          fontSize: "0.85rem",
+        }}
+      >
+        Loading chat...
+      </div>
+    );
+  }
+
+  return (
+    <ChatSectionReady
+      roomCode={roomCode}
+      currentUser={currentUser}
+      history={history}
+      onNew={onNew}
+      onClose={onClose}
+    />
+  );
+}
+
+function ChatSectionReady({ roomCode, currentUser, history, onNew, onClose }) {
   const { messages, sendMessage, connected } = useChat(
     roomCode,
     currentUser,
