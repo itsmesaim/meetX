@@ -7,8 +7,23 @@ import DashboardPage from "./pages/DashboardPage.jsx";
 import RoomPage from "./pages/RoomPage.jsx";
 
 function PrivateRoute({ children }) {
-  const { token } = useAuth();
-  return token ? children : <Navigate to="/login" replace />;
+  const { token, logout } = useAuth(); 
+
+  if (!token) return <Navigate to="/login" replace />;
+
+  // Token expiry check
+  try {
+    const { exp } = JSON.parse(atob(token.split(".")[1]));
+    if (exp * 1000 < Date.now()) {
+      logout();
+      return <Navigate to="/login" replace />;
+    }
+  } catch {
+    logout();
+    return <Navigate to="/login" replace />;
+  }
+
+  return children;
 }
 
 export default function App() {

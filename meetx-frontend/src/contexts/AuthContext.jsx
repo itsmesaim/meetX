@@ -3,7 +3,23 @@ import { createContext, useContext, useState, useCallback } from "react";
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(() => localStorage.getItem("meetx_token"));
+  // const [token, setToken] = useState(() => localStorage.getItem("meetx_token"));
+  const [token, setToken] = useState(() => {
+    const stored = localStorage.getItem("meetx_token");
+    if (!stored) return null;
+    try {
+      const { exp } = JSON.parse(atob(stored.split(".")[1]));
+      if (exp * 1000 < Date.now()) {
+        localStorage.removeItem("meetx_token");
+        localStorage.removeItem("meetx_user");
+        return null; // Expired, treat as logged
+      }
+      return stored; // Valid, keep
+    } catch {
+      localStorage.removeItem("meetx_token");
+      return null;
+    }
+  });
   const [user, setUser] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("meetx_user") || "null");

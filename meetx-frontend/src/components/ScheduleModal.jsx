@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { api } from "../services/api.js";
 import styles from "./ScheduleModal.module.css";
-// import DateTimePicker from '../components/DateTimePicker.jsx'
 
 export default function ScheduleModal({
   token,
@@ -17,12 +16,11 @@ export default function ScheduleModal({
     durationMinutes: editMode && meeting ? meeting.durationMinutes : 60,
     invitees: "",
   });
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [step, setStep] = useState(1);
   const [currentInvitees, setCurrent] = useState(
     editMode && meeting ? [...(meeting.invitees || [])] : [],
   );
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const hc = (e) => setForm((f) => ({ ...f, [e.target.name]: e.target.value }));
   const min = new Date(Date.now() + 5 * 60 * 1000).toISOString().slice(0, 16);
@@ -42,10 +40,12 @@ export default function ScheduleModal({
       setError("Must be in the future");
       return;
     }
+
     const newInv = form.invitees
       .split(/[\n,]+/)
       .map((e) => e.trim())
       .filter((e) => e.includes("@"));
+
     setLoading(true);
     try {
       let result;
@@ -88,6 +88,7 @@ export default function ScheduleModal({
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className={`${styles.modal} anim-scale-in`}>
+        {/* Header */}
         <div className={styles.header}>
           <div className={styles.headerLeft}>
             <div className={styles.hIcon}>
@@ -97,7 +98,6 @@ export default function ScheduleModal({
               <h2 className={styles.title}>
                 {editMode ? "Edit meeting" : "Schedule a meeting"}
               </h2>
-              {!editMode && <p className={styles.stepTxt}>Step {step} of 2</p>}
             </div>
           </div>
           <button className={styles.xBtn} onClick={onClose}>
@@ -105,212 +105,147 @@ export default function ScheduleModal({
           </button>
         </div>
 
-        {!editMode && (
-          <div className={styles.progress}>
-            <div
-              className={styles.progressFill}
-              style={{ width: `${(step / 2) * 100}%` }}
-            />
-          </div>
-        )}
-
         {error && <div className={styles.err}>{error}</div>}
 
+        {/* ── Single form — no steps ── */}
         <form onSubmit={submit} className={styles.form}>
-          {(step === 1 || editMode) && (
-            <>
-              <div className={styles.field}>
-                <label className={styles.label}>Meeting title *</label>
-                <input
-                  className="input-field"
-                  type="text"
-                  name="title"
-                  placeholder="e.g. Team standup, Interview…"
-                  value={form.title}
-                  onChange={hc}
-                  required
-                  autoFocus
-                />
-              </div>
-              <div className={styles.field}>
-                <label className={styles.label}>
-                  Description <span className={styles.opt}>(optional)</span>
-                </label>
-                <textarea
-                  className={`input-field ${styles.ta}`}
-                  name="description"
-                  placeholder="What's this meeting about?"
-                  value={form.description}
-                  onChange={hc}
-                  rows={2}
-                />
-              </div>
-              <div className={styles.row}>
-                <div className={styles.field}>
-                  <label className={styles.label}>
-                    Date & time {!editMode && "*"}
-                  </label>
-                  <input
-                    className="input-field"
-                    type="datetime-local"
-                    name="scheduledAt"
-                    value={form.scheduledAt}
-                    onChange={hc}
-                    min={min}
-                    required={!editMode}
-                  />
+          {/* Title */}
+          <div className={styles.field}>
+            <label className={styles.label}>Meeting title *</label>
+            <input
+              className="input-field"
+              type="text"
+              name="title"
+              placeholder="e.g. Team standup, Interview…"
+              value={form.title}
+              onChange={hc}
+              required
+              autoFocus
+            />
+          </div>
+
+          {/* Description */}
+          <div className={styles.field}>
+            <label className={styles.label}>
+              Description <span className={styles.opt}>(optional)</span>
+            </label>
+            <textarea
+              className={`input-field ${styles.ta}`}
+              name="description"
+              placeholder="What's this meeting about?"
+              value={form.description}
+              onChange={hc}
+              rows={2}
+            />
+          </div>
+
+          {/* Date & Duration */}
+          <div className={styles.row}>
+            <div className={styles.field}>
+              <label className={styles.label}>
+                Date & time {!editMode && "*"}
+              </label>
+              <input
+                className="input-field"
+                type="datetime-local"
+                name="scheduledAt"
+                value={form.scheduledAt}
+                onChange={hc}
+                min={min}
+                required={!editMode}
+              />
+            </div>
+            <div className={styles.field} style={{ maxWidth: 140 }}>
+              <label className={styles.label}>Duration</label>
+              <select
+                className="input-field"
+                name="durationMinutes"
+                value={form.durationMinutes}
+                onChange={hc}
+              >
+                <option value={15}>15 min</option>
+                <option value={30}>30 min</option>
+                <option value={45}>45 min</option>
+                <option value={60}>1 hour</option>
+                <option value={90}>1.5 hrs</option>
+                <option value={120}>2 hours</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Divider */}
+          <div
+            style={{
+              borderTop: "1px solid rgba(255,255,255,0.07)",
+              margin: "0.5rem 0",
+            }}
+          />
+
+          {/* Current invitees (edit mode only) */}
+          {editMode && (
+            <div className={styles.field}>
+              <label className={styles.label}>Current invitees</label>
+              {currentInvitees.length > 0 ? (
+                <div className={styles.pills}>
+                  {currentInvitees.map((e) => (
+                    <span key={e} className={styles.pill}>
+                      {e}
+                      <button
+                        type="button"
+                        className={styles.pillX}
+                        onClick={() =>
+                          setCurrent((p) => p.filter((x) => x !== e))
+                        }
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
                 </div>
-                <div className={styles.field} style={{ maxWidth: 140 }}>
-                  <label className={styles.label}>Duration</label>
-                  <select
-                    className="input-field"
-                    name="durationMinutes"
-                    value={form.durationMinutes}
-                    onChange={hc}
-                  >
-                    <option value={15}>15 min</option>
-                    <option value={30}>30 min</option>
-                    <option value={45}>45 min</option>
-                    <option value={60}>1 hour</option>
-                    <option value={90}>1.5 hrs</option>
-                    <option value={120}>2 hours</option>
-                  </select>
-                </div>
-              </div>
-              {editMode && currentInvitees.length > 0 && (
-                <div className={styles.field}>
-                  <label className={styles.label}>Current invitees</label>
-                  <div className={styles.pills}>
-                    {currentInvitees.map((e) => (
-                      <span key={e} className={styles.pill}>
-                        {e}
-                        <button
-                          type="button"
-                          className={styles.pillX}
-                          onClick={() =>
-                            setCurrent((p) => p.filter((x) => x !== e))
-                          }
-                        >
-                          ×
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                </div>
+              ) : (
+                <p className={styles.hint}>No invitees yet.</p>
               )}
-              {editMode && (
-                <div className={styles.field}>
-                  <label className={styles.label}>Add more people</label>
-                  <textarea
-                    className={`input-field ${styles.ta}`}
-                    name="invitees"
-                    placeholder="email@example.com, another@example.com"
-                    value={form.invitees}
-                    onChange={hc}
-                    rows={2}
-                  />
-                </div>
-              )}
-            </>
+            </div>
           )}
 
-          {step === 2 && !editMode && (
-            <>
-              <div className={styles.preview}>
-                <div className={styles.previewIcon}>
-                  <CalIco />
-                </div>
-                <div>
-                  <p className={styles.previewTitle}>{form.title}</p>
-                  <p className={styles.previewTime}>
-                    {form.scheduledAt
-                      ? new Date(form.scheduledAt).toLocaleString([], {
-                          weekday: "short",
-                          month: "short",
-                          day: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })
-                      : ""}{" "}
-                    · {form.durationMinutes} min
-                  </p>
-                </div>
-              </div>
-              <div className={styles.field}>
-                <label className={styles.label}>
-                  Invite people <span className={styles.opt}>(optional)</span>
-                </label>
-                <textarea
-                  className={`input-field ${styles.ta}`}
-                  name="invitees"
-                  placeholder="friend@example.com, colleague@work.com"
-                  value={form.invitees}
-                  onChange={hc}
-                  rows={3}
-                  autoFocus
-                />
-                <p className={styles.hint}>
-                  Each person will receive an email with the room code and join
-                  link
-                </p>
-              </div>
-            </>
-          )}
+          {/* Invite people — always visible */}
+          <div className={styles.field}>
+            <label className={styles.label}>
+              📧 {editMode ? "Add more people" : "Invite people"}
+              <span className={styles.opt}> (optional)</span>
+            </label>
+            <textarea
+              className={`input-field ${styles.ta}`}
+              name="invitees"
+              placeholder="friend@example.com, colleague@work.com"
+              value={form.invitees}
+              onChange={hc}
+              rows={3}
+            />
+            <p className={styles.hint}>
+              Separate emails with commas. New users get a signup invite
+              automatically.
+            </p>
+          </div>
 
+          {/* Actions */}
           <div className={styles.actions}>
-            {!editMode && step === 2 && (
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => setStep(1)}
-              >
-                ← Back
-              </button>
-            )}
-            {(editMode || step === 1) && (
-              <button type="button" className="btn btn-ghost" onClick={onClose}>
-                Cancel
-              </button>
-            )}
-
-            {!editMode && step === 1 ? (
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => {
-                  if (!form.title.trim()) {
-                    setError("Title required");
-                    return;
-                  }
-                  if (!form.scheduledAt) {
-                    setError("Pick a time");
-                    return;
-                  }
-                  if (new Date(form.scheduledAt) <= new Date()) {
-                    setError("Must be in future");
-                    return;
-                  }
-                  setError("");
-                  setStep(2);
-                }}
-              >
-                Next →
-              </button>
-            ) : (
-              <button
-                type="submit"
-                className="btn btn-primary"
-                disabled={loading}
-              >
-                {loading ? (
-                  <span className="spinner" />
-                ) : editMode ? (
-                  "Save changes"
-                ) : (
-                  "Schedule meeting"
-                )}
-              </button>
-            )}
+            <button type="button" className="btn btn-ghost" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={loading}
+            >
+              {loading ? (
+                <span className="spinner" />
+              ) : editMode ? (
+                "Save changes"
+              ) : (
+                "Schedule meeting"
+              )}
+            </button>
           </div>
         </form>
       </div>

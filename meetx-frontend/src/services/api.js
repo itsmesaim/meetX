@@ -2,9 +2,21 @@ const BASE = "/api";
 
 async function request(path, options = {}, token = null) {
   const headers = { "Content-Type": "application/json", ...options.headers };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  // auto-read from localStorage if token not passed
+  const authToken = token || localStorage.getItem("meetx_token");
+  if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
 
   const res = await fetch(`${BASE}${path}`, { ...options, headers });
+
+  // 401 anywhere = session dead = auto logout + redirect
+  if (res.status === 401) {
+    // localStorage.clear();
+    localStorage.removeItem("meetx_token");
+    localStorage.removeItem("meetx_user");
+    window.location.href = "/login";
+    return Promise.reject(new Error("Session expired. Please login again."));
+  }
 
   const text = await res.text();
   if (!text) throw new Error("Server returned empty response");
@@ -23,7 +35,7 @@ async function request(path, options = {}, token = null) {
 }
 
 export const api = {
-  // ── Auth ────────────────────────────────────────────────────
+  // Auth
   register: (name, email, password) =>
     request("/auth/register", {
       method: "POST",
@@ -36,7 +48,7 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
 
-  // ── Rooms ────────────────────────────────────────────────────
+  // Rooms
   createRoom: (token) => request("/rooms/create", { method: "POST" }, token),
 
   joinRoom: (roomCode, token) =>
@@ -59,7 +71,7 @@ export const api = {
   closeRoom: (roomCode, token) =>
     request(`/rooms/${roomCode}`, { method: "DELETE" }, token),
 
-  // ── Session tracking ─────────────────────────────────────────
+  // Session tracking
   // Call these when a participant joins/leaves the LiveKit room
   notifyJoin: (roomCode, token) =>
     request(`/rooms/${roomCode}/session/join`, { method: "POST" }, token),
@@ -67,11 +79,11 @@ export const api = {
   notifyLeave: (roomCode, token) =>
     request(`/rooms/${roomCode}/session/leave`, { method: "POST" }, token),
 
-  // ── Chat ─────────────────────────────────────────────────────
+  // Chat
   getChatHistory: (roomCode, token) =>
     request(`/chat/${roomCode}/history`, { method: "GET" }, token),
 
-  // ── Scheduled meetings ────────────────────────────────────────
+  // Scheduled meetings
   scheduleMeeting: (data, token) =>
     request(
       "/meetings/schedule",
