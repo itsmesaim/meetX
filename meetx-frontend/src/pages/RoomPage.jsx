@@ -83,12 +83,12 @@ export default function RoomPage() {
     if (sessionHost) sessionStorage.removeItem("meetx_host_room");
 
     // Check localStorage for persisted role (refresh case)
-    const savedRole = localStorage.getItem(`meetx_role_${code}`);
+    const savedRole = sessionStorage.getItem(`meetx_role_${code}`);
     const amHost = sessionHost || savedRole === "host";
     const canAutoJoin = amHost || savedRole === "admitted";
 
     // Persist host role
-    if (sessionHost) localStorage.setItem(`meetx_role_${code}`, "host");
+    if (sessionHost) sessionStorage.setItem(`meetx_role_${code}`, "host");
     setIsHost(amHost);
 
     api
@@ -96,7 +96,7 @@ export default function RoomPage() {
       .then(async () => {
         if (canAutoJoin) {
           // Host or previously admitted — enter directly
-          const lkData = await api.getLiveKitToken(code, userName, token);
+          const lkData = await api.getLiveKitToken(code, userEmail, token);
           setLkToken(lkData.token);
           setAdmission("admitted");
           if (amHost) {
@@ -151,9 +151,13 @@ export default function RoomPage() {
           const result = await api.checkAdmission(roomCode, userEmail, token);
           if (result?.admitted) {
             clearInterval(pollInterval);
-            const lkData = await api.getLiveKitToken(roomCode, userName, token);
+            const lkData = await api.getLiveKitToken(
+              roomCode,
+              userEmail,
+              token,
+            );
             setLkToken(lkData.token);
-            localStorage.setItem(`meetx_role_${roomCode}`, "admitted");
+            sessionStorage.setItem(`meetx_role_${roomCode}`, "admitted");
             setAdmission("admitted");
             setupGuestStompAdmitted(roomCode);
           } else if (result?.denied) {
@@ -176,7 +180,7 @@ export default function RoomPage() {
           const data = JSON.parse(msg.body);
           if (data.email === userEmail) {
             clearInterval(pollInterval);
-            localStorage.removeItem(`meetx_role_${roomCode}`);
+            sessionStorage.removeItem(`meetx_role_${roomCode}`);
             navigate("/");
           }
         });
@@ -214,7 +218,7 @@ export default function RoomPage() {
         client.subscribe(`/topic/room/${roomCode}/kicks`, (msg) => {
           const data = JSON.parse(msg.body);
           if (data.email === userEmail) {
-            localStorage.removeItem(`meetx_role_${roomCode}`);
+            sessionStorage.removeItem(`meetx_role_${roomCode}`);
             alert("You have been removed from the meeting.");
             navigate("/");
           }
@@ -252,7 +256,7 @@ export default function RoomPage() {
     api.notifyLeave(code, token).catch(() => {});
     stompRef.current?.deactivate();
     // Host leaves: clear host role so others need re-admission next time
-    if (isHost) localStorage.removeItem(`meetx_role_${code}`);
+    if (isHost) sessionStorage.removeItem(`meetx_role_${code}`);
     navigate("/");
   }, [code, token, navigate, isHost]);
 
@@ -520,10 +524,13 @@ function VideoGrid() {
 }
 
 // ── Floating controls ──────────────────────────────────────────────────────────
+const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
 function FloatingControls({ timer, onInvite, onLeave, isHost, onKick }) {
   const { localParticipant } = useLocalParticipant();
   const [mic, setMic] = useState(false);
   const [cam, setCam] = useState(false);
+  const [facingMode, setFacingMode] = useState("user");
   const [screen, setScreen] = useState(false);
   const [screenErr, setScreenErr] = useState("");
   const [showParticipants, setShowParticipants] = useState(false);
@@ -538,8 +545,19 @@ function FloatingControls({ timer, onInvite, onLeave, isHost, onKick }) {
   const toggleCam = async () => {
     if (!localParticipant) return;
     const n = !cam;
-    await localParticipant.setCameraEnabled(n, { facingMode: "user" });
+    await localParticipant.setCameraEnabled(n, { facingMode });
     setCam(n);
+  };
+
+  // ✅ Flip front/back camera
+  const flipCamera = async () => {
+    if (!localParticipant) return;
+    const newMode = facingMode === "user" ? "environment" : "user";
+    setFacingMode(newMode);
+    if (cam) {
+      await localParticipant.setCameraEnabled(false);
+      await localParticipant.setCameraEnabled(true, { facingMode: newMode });
+    }
   };
 
   const toggleScreen = async () => {
@@ -594,14 +612,26 @@ function FloatingControls({ timer, onInvite, onLeave, isHost, onKick }) {
         >
           {cam ? <CamIco /> : <CamOffIco />}
         </CtrlB>
-        <CtrlB
-          on={screen}
-          accent={screen}
-          onClick={toggleScreen}
-          tip={screen ? "Stop sharing" : "Share screen"}
-        >
-          <ScreenIco />
-        </CtrlB>
+
+        {/*  Camera flip — only on mobile, only when camera is on */}
+        {isMobile && cam && (
+          <CtrlB onClick={flipCamera} tip="Flip camera">
+            <FlipIco />
+          </CtrlB>
+        )}
+
+        {/*  Screen share — desktop only (mobile browsers don't support it reliably) */}
+        {!isMobile && (
+          <CtrlB
+            on={screen}
+            accent={screen}
+            onClick={toggleScreen}
+            tip={screen ? "Stop sharing" : "Share screen"}
+          >
+            <ScreenIco />
+          </CtrlB>
+        )}
+
         <CtrlB onClick={onInvite} tip="Invite people">
           <InvIco />
         </CtrlB>
@@ -866,6 +896,16 @@ function CloseIco() {
     </svg>
   );
 }
+
+function FlipIco() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" {...sv}>
+      <path d="M23 4v6h-6M1 20v-6h6" />
+      <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
+    </svg>
+  );
+}
+
 function SunIco() {
   return (
     <svg width="15" height="15" viewBox="0 0 24 24" {...sv}>

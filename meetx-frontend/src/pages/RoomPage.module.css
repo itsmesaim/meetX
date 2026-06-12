@@ -663,30 +663,39 @@
 /* ── Responsive ───────────────────────────── */
 @media (max-width: 600px) {
   .ctrlFloat {
-    bottom: 14px;
+    bottom: 70px;
+    left: 50%;
+    transform: translateX(-50%);
   }
+
   .chatFab {
     bottom: 14px;
-    right: 14px;
+    right: 50%;
+    transform: translateX(50%);
     width: 46px;
     height: 46px;
   }
+
   .ctrlBtn,
   .leaveBtn {
     width: 38px;
     height: 38px;
   }
+
   .pill {
     padding: 6px 10px;
     gap: 3px;
   }
+
   .timerVal {
     font-size: 0.7rem;
   }
+
   .chatDrawer {
     height: 68%;
     max-height: none;
   }
+
   .knockStack {
     max-width: calc(100vw - 32px);
   }
